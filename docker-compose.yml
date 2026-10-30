@@ -1,0 +1,40 @@
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: deposito
+      POSTGRES_PASSWORD: deposito
+      POSTGRES_DB: deposito
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./db:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U deposito -d deposito"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  billetera-mock:
+    build: ./mocks/billetera
+    ports:
+      - "4000:4000"
+
+  deposito-service:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      PORT: 3000
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      DATABASE_URL: postgres://deposito:deposito@db:5432/deposito
+      BILLETERA_URL: http://billetera-mock:4000
+      BILLETERA_TOKEN: ${BILLETERA_TOKEN:-}
+      JWT_PUBLIC_KEY: ${JWT_PUBLIC_KEY:-}
+      UIF_UMBRAL_PEN: ${UIF_UMBRAL_PEN:-}
+      UIF_UMBRAL_USD: ${UIF_UMBRAL_USD:-}
+    depends_on:
+      db:
+        condition: service_healthy
+      billetera-mock:
+        condition: service_started

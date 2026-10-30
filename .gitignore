@@ -1,0 +1,5 @@
+node_modules/
+.env
+.dev-keys/
+tests/.tmp/
+coverage/

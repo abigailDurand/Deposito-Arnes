@@ -21,7 +21,7 @@
         "Ningún secreto ni URL aparece en el código fuente",
         "PRY-T02 y PRY-T03 pasan; PRY-T01 queda como test.todo hasta SPEC-06"
       ],
-      "status": "pending"
+      "status": "done"
     },
     {
       "id": 1,

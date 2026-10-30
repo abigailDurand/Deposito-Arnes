@@ -1,0 +1,31 @@
+{
+  "name": "deposito-service",
+  "version": "1.0.0",
+  "description": "Microservicio de depósitos de un banco (proyecto de curso)",
+  "private": true,
+  "main": "src/server.js",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "jest --coverage --runInBand --passWithNoTests",
+    "test:unit": "jest --selectProjects unit --passWithNoTests",
+    "test:integration": "jest --selectProjects integration --runInBand --passWithNoTests"
+  },
+  "dependencies": {
+    "axios": "1.7.9",
+    "decimal.js": "10.4.3",
+    "express": "4.21.2",
+    "js-yaml": "4.1.0",
+    "jsonwebtoken": "9.0.2",
+    "pg": "8.13.1",
+    "pino": "9.5.0",
+    "zod": "3.23.8"
+  },
+  "devDependencies": {
+    "jest": "29.7.0",
+    "nock": "13.5.6",
+    "supertest": "7.0.0"
+  }
+}
