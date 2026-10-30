@@ -173,3 +173,80 @@ All files             |   99.05 |       94 |      95 |   98.97 |
 - `src/core/`: ≥ 90 % en todas las métricas (umbral 80 % cumplido). `billeteraClient.js` pasa de 0 % a 100 % líneas.
 - Sin cubrir en `billeteraClient.js:45`: rama `err.message` cuando un error de axios no trae `code` (solo afecta al detalle del log).
 - `src/modules/`: sin código todavía.
+
+## SPEC-03
+
+- **Agente:** tester · **Fecha:** 2026-10-30 · **Feature:** 3 (`seguridad`)
+- **Ejecución:** `bash init.sh` completo → `EXIT=0` (PostgreSQL real arriba).
+  `[OK] SPEC-03: todos sus casos tienen prueba (todo: SEG-T06)`. `Test Suites: 7 passed · Tests: 2 todo, 87 passed, 89 total`.
+- T01–T05, T08–T10 montan los middlewares reales en una app Express mínima dentro del test
+  (`correlationId → GET /health → autenticar → rutas → manejadorErrores`, orden de PIP-R11) y se
+  prueban con Supertest. Tokens con `tests/helpers/tokens.js` (otra clave RSA generada en el test,
+  `alg: none`, `aud` distinto, `exp` pasado). La integración no necesita filas, pero respeta
+  `limpiar()` en `beforeEach`.
+- **SEG-T09 sin vaciar el log:** se usa pino real con las opciones reales de `src/core/logger.js`
+  (en `jest.isolateModules` con `LOG_LEVEL=info` solo durante la carga; únicamente se redirige el
+  destino a un `Writable`). Se cargan `correlationId`, `auth` y `manejadorErrores` en ese mismo
+  registro, así toda la salida JSON de la petición (log de petición + `logger.error` del 500) queda capturada.
+
+### Casos cubiertos
+
+| Caso | Archivo | Resultado |
+|---|---|---|
+| SEG-T01 sin `Authorization` → 401 `TOKEN_REQUERIDO` (+ `Basic …`, `Bearer ` vacío, token sin `Bearer`) | `tests/integration/seguridad/seguridad.test.js` | ✅ |
+| SEG-T02 `exp` en el pasado → 401 `TOKEN_EXPIRADO` | `tests/integration/seguridad/seguridad.test.js` | ✅ |
+| SEG-T03 firmado con otra clave → 401 `TOKEN_INVALIDO` | `tests/integration/seguridad/seguridad.test.js` | ✅ |
+| SEG-T04 `alg: none` → 401 `TOKEN_INVALIDO` | `tests/integration/seguridad/seguridad.test.js` | ✅ |
+| SEG-T05 `aud` distinto → 401 `TOKEN_INVALIDO` | `tests/integration/seguridad/seguridad.test.js` | ✅ |
+| SEG-T07 `verificarCanal` CLIENTE + VENTANILLA → lanza `ErrorApp` `SIN_PERMISO` (403) | `tests/unit/seguridad/permisos.test.js` | ✅ |
+| SEG-T08 sin `X-Correlation-Id` → UUID no vacío (distinto por petición); con `abc` → `abc`; también en header y cuerpo de un 401 | `tests/integration/seguridad/seguridad.test.js` | ✅ |
+| SEG-T09 500 forzado en `POST /cuentas/0011-0123-456789/depositos` → la salida del log no contiene el JWT, ni su firma, ni `0011-0123-456789` / `0011-0123`; el registro trae `status: 500`, `duracionMs` entero ≥ 0, `usuarioId`, `metodo`, ruta enmascarada | `tests/integration/seguridad/seguridad.test.js` | ✅ |
+| SEG-T10 `requiereRol('AGENTE')` con token CLIENTE → 403 `{ codigo: SIN_PERMISO, mensaje, correlationId }` | `tests/integration/seguridad/seguridad.test.js` | ✅ |
+
+Pruebas extra (justificadas por SEG-R01/R03/R06/R08/R09–R13), todas ✅:
+
+- SEG-R06 token mal formado → `TOKEN_INVALIDO`; SEG-R08 token válido → `req.usuario = { id, roles }`; `/health` responde sin token.
+- SEG-R09 rol permitido pasa, lista de varios roles; sin `req.usuario` → `SIN_PERMISO`; `requiereRol()` sin roles lanza.
+- SEG-R01 id de exactamente 100 caracteres se respeta; 101 caracteres, espacio, `;`, `.` → UUID nuevo.
+- SEG-R03 petición cortada en `autenticar` (401) → registro con `usuarioId: null`, sin el token.
+- SEG-R10 tabla completa rol × canal, canal/rol desconocido (`toString`), sin roles/usuario; SEG-R13 varios roles.
+- SEG-R11 CLIENTE propio/ajeno/`null`; AGENTE y CAJERO a cualquier cuenta. SEG-R12 `esTitular` siempre booleano.
+
+### Casos en `test.todo`
+
+| Caso | Espera |
+|---|---|
+| SEG-T06 `usr-cliente-1` deposita a `0011-0123-000002` → 403; billetera no recibe acreditación | SPEC-07 (ruta `POST` de depósito) |
+
+No había `test.todo` previos que esperaran SPEC-03 (PRY-T01 sigue esperando SPEC-06).
+
+### Pruebas fallidas
+
+Ninguna.
+
+### Cobertura (`src/core/` y `src/modules/`)
+
+```
+----------------------|---------|----------|---------|---------|-------------------
+File                  | % Stmts | % Branch | % Funcs | % Lines | Uncovered Line #s
+----------------------|---------|----------|---------|---------|-------------------
+All files             |   98.75 |     93.4 |   97.14 |   99.31 |
+ core                 |   98.64 |    94.59 |   93.75 |   98.55 |
+  db.js               |   94.73 |      100 |      50 |   94.73 | 14
+  depositoMapper.js   |     100 |    83.33 |     100 |     100 | 24
+  errores.js          |     100 |    92.85 |     100 |     100 | 62
+  logger.js           |     100 |      100 |     100 |     100 |
+  permisos.js         |     100 |      100 |     100 |     100 |
+ core/clients         |     100 |    92.85 |     100 |     100 |
+  billeteraClient.js  |     100 |    92.85 |     100 |     100 | 45
+ core/middlewares     |   98.33 |     92.5 |     100 |     100 |
+  auth.js             |   96.42 |    94.73 |     100 |     100 | 43
+  correlationId.js    |     100 |    77.77 |     100 |     100 | 18
+  manejadorErrores.js |     100 |      100 |     100 |     100 |
+----------------------|---------|----------|---------|---------|-------------------
+```
+
+- `src/core/`: todas las métricas ≥ 93 % (umbral 80 % cumplido; antes 65 % por falta de estas pruebas).
+- Sin cubrir: `auth.js:43` (rama de `payloadValido` para un token firmado sin `sub` o con `roles: []`; el helper solo firma usuarios de SPEC-02 §4) y `correlationId.js:18` (fallback `req.url`/`''` de `rutaParaLog`, inalcanzable en Express).
+- `src/modules/`: sin código todavía.
+- **Correcciones tras review** (`progress/review_03.md`, obs. 1): añadido `describe('SEG-R06 payload firmado correctamente pero incompleto')` en `tests/integration/seguridad/seguridad.test.js` — tokens RS256 firmados con `jsonwebtoken` y `tests/.tmp/privada.pem` (iss/aud/exp válidos): control con `sub`+`roles` → 200; sin `sub`, `sub: ''`, `roles: []`, sin `roles`, `roles` no arreglo → 401 `TOKEN_INVALIDO`. `bash init.sh` → `EXIT=0`, `Tests: 2 todo, 93 passed, 95 total`; `auth.js` pasa a 100 % (stmts/branch), `src/core/` All files 99.37 % stmts / 94.5 % branch. Ya no queda sin cubrir `auth.js:43`.

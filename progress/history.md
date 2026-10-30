@@ -60,3 +60,15 @@
   - Para el equipo: titular de las cuentas especiales del mock no definido en §4 (llevar a P1/P3).
   - SPEC-06: `deposito-service` en compose sigue sin poder arrancar hasta que exista `src/server.js`.
 - **Cierre:** feature 2 `done`. Próximo: SPEC-03 (seguridad).
+
+## 2026-10-30 — Feature 3: seguridad (SPEC-03)
+- **Agentes:** leader → desarrolladorback → tester → revisor → tester (corrección).
+- **Cambios:** `src/core/middlewares/{correlationId,auth}.js`, `src/core/permisos.js`,
+  `tests/unit/seguridad/permisos.test.js`, `tests/integration/seguridad/seguridad.test.js`.
+- **Verificación:** `bash init.sh` completo verde. SEG-T06 en `test.todo` (espera SPEC-07).
+- **Veredicto:** APROBADO CON OBSERVACIONES (`progress/review_03.md`). Corregido tras review: pruebas de
+  SEG-R06 (token sin `sub` / `roles` vacío). Arrastrar:
+  - SPEC-06: `correlationId` primero y `autenticar` después de `GET /health` (PIP-R11).
+  - SPEC-07/08/09: `requiereRol` en cada ruta; `verificarCanal` + `verificarTitular` tras consultar la cuenta.
+  - SPEC-07: convertir SEG-T06 en prueba real.
+- **Cierre:** feature 3 `done`. Próximo: SPEC-04 (auditoría).
