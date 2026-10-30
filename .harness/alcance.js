@@ -4,7 +4,7 @@
 const { RAIZ, leerFeatures, archivosDeclarados, listarArchivos, ok, fail } = require('./lib');
 
 const ARNES = [
-  /^(CLAUDE|AGENTS|CHECKPOINTS|README)\.md$/, /^init\.sh$/, /^feature_list\.json$/,
+  /^(CLAUDE|AGENTS|CHECKPOINTS|README)\.md$/, /^init\.sh$/, /^feature_list\.json$/, /^\.gitattributes$/,
   /^progress\//, /^docs\//, /^\.claude\//, /^\.harness\//, /^specs-v2\//,
 ];
 const IGNORADOS = [
