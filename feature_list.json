@@ -79,7 +79,7 @@
         "Un fallo de auditoría nunca afecta al cliente",
         "Casos AUD-T que no requieren SPEC-07 pasan; el resto queda como test.todo"
       ],
-      "status": "pending"
+      "status": "done"
     },
     {
       "id": 5,

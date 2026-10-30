@@ -250,3 +250,65 @@ All files             |   98.75 |     93.4 |   97.14 |   99.31 |
 - Sin cubrir: `auth.js:43` (rama de `payloadValido` para un token firmado sin `sub` o con `roles: []`; el helper solo firma usuarios de SPEC-02 §4) y `correlationId.js:18` (fallback `req.url`/`''` de `rutaParaLog`, inalcanzable en Express).
 - `src/modules/`: sin código todavía.
 - **Correcciones tras review** (`progress/review_03.md`, obs. 1): añadido `describe('SEG-R06 payload firmado correctamente pero incompleto')` en `tests/integration/seguridad/seguridad.test.js` — tokens RS256 firmados con `jsonwebtoken` y `tests/.tmp/privada.pem` (iss/aud/exp válidos): control con `sub`+`roles` → 200; sin `sub`, `sub: ''`, `roles: []`, sin `roles`, `roles` no arreglo → 401 `TOKEN_INVALIDO`. `bash init.sh` → `EXIT=0`, `Tests: 2 todo, 93 passed, 95 total`; `auth.js` pasa a 100 % (stmts/branch), `src/core/` All files 99.37 % stmts / 94.5 % branch. Ya no queda sin cubrir `auth.js:43`.
+
+## SPEC-04
+
+- **Agente:** tester · **Fecha:** 2026-10-30 · **Feature:** 4 (`auditoria`)
+- **Ejecución:** `bash init.sh` completo → verde (8 suites, 105 passed, 5 todo). PostgreSQL real
+  (`DATABASE_URL_TEST`); `limpiar()` en `beforeEach` (su `TRUNCATE` funciona pese al trigger, verificado en AUD-T05).
+- **App de prueba:** SPEC-06 (`crearApp`) aún no existe → app Express mínima con el orden de PIP-R11:
+  `correlationId → auditoria → /health → autenticar → express.json → rutas → manejadorErrores`.
+  Las rutas son falsas pero con el mismo método y path que las auditadas (`POST /api/v1/depositos`,
+  `GET /api/v1/depositos/:id`, `GET /api/v1/cuentas/:numero/depositos`). Las filas se leen con
+  reintentos cortos (hasta 1 s), como pide §6.
+
+### Casos cubiertos
+
+| Caso | Archivo | Resultado |
+|---|---|---|
+| AUD-T03 POST sin token → 401; 1 fila `CREAR_DEPOSITO` `ERROR_401`, `usuario_id` y `deposito_id` nulos, `correlation_id` el de la petición | `tests/integration/auditoria/auditoria.test.js` | ✅ |
+| AUD-T05 `UPDATE` y `DELETE` directos → ambos lanzan `auditoria_depositos es solo de inserción`; la fila sigue intacta; `TRUNCATE` sí limpia | idem | ✅ |
+| AUD-T06 `insertar` forzado a rechazar (error con la cuenta en mensaje/detail) → respuesta 201 normal con su cuerpo y X-Correlation-Id; `logger.error` 1 vez con `{correlationId, accion}` y sin la cuenta completa ni `0011-0123`; 0 filas | idem | ✅ |
+| AUD-T07 `GET /api/v1/depositos/{id}` → 1 fila `CONSULTAR_DEPOSITO`, `EXITO`, usuario del token | idem | ✅ |
+| AUD-T08 `GET /health` → 0 filas (esperando el 1 s completo) | idem | ✅ |
+
+Justificación de AUD-T06 y AUD-T07 con ruta falsa: lo que verifican (acción deducida de método+path,
+respuesta intacta ante fallo del INSERT, log sin datos sensibles) depende solo del middleware, no del
+controller. Ninguno de los dos exige un depósito real ni `deposito_id` lleno.
+
+Pruebas extra (reglas sin caso numerado), mismo archivo, todas ✅:
+- AUD-R07/R08: `canal` VENTANILLA y `monto` "0.01" válidos se guardan; con token → `usuario_id` y `EXITO`.
+- AUD-R07: canal fuera de lista/minúsculas, monto numérico `10`, monto `"10.001"` y body array → `canal` y `monto` null.
+- AUD-R08: JSON mal formado → fila `ERROR_400`.
+- AUD-R02: `GET /cuentas/{numero}/depositos?pagina=1` → `LISTAR_DEPOSITOS`; rutas no listadas, 404 inexistentes, `DELETE /depositos/{id}` y `GET /depositos` → 0 filas; `deducirAccion` sin distinguir mayúsculas, con barra final y con query.
+- AUD-R07: `extraerDelBody` con body `undefined`/`null`.
+
+### Casos en `test.todo`
+
+| Caso | Espera | Motivo |
+|---|---|---|
+| AUD-T01 depósito válido → fila `EXITO` con `deposito_id` lleno | SPEC-07 | Necesita un depósito real creado por el controller (FK a `depositos` y `res.locals.depositoId`) |
+| AUD-T02 monto `"-5"` → `ERROR_422`, monto -5.00 | SPEC-07 | El 422 lo produce la validación de SPEC-07; simularlo con ruta falsa sería inventar su comportamiento |
+| AUD-T04 3 POST con la misma clave → 3 filas mismo `deposito_id`, 1 depósito | SPEC-05 y SPEC-07 | Requiere idempotencia y creación real |
+
+### Pruebas fallidas
+
+Ninguna.
+
+### Cobertura (`src/core/` y `src/modules/`)
+
+```
+-------------------------|---------|----------|---------|---------|-------------------
+File                     | % Stmts | % Branch | % Funcs | % Lines | Uncovered Line #s
+-------------------------|---------|----------|---------|---------|-------------------
+All files                |   99.47 |    92.91 |   97.67 |   99.43 |
+ core/middlewares        |     100 |     92.1 |     100 |     100 |
+  auditoria.js           |     100 |    88.88 |     100 |     100 | 55-65
+ core/repositories       |     100 |      100 |     100 |     100 |
+  auditoriaRepository.js |     100 |      100 |     100 |     100 |
+-------------------------|---------|----------|---------|---------|-------------------
+Tests:       5 todo, 105 passed, 110 total
+```
+
+- `src/core/`: 98,64 % stmts · 94,59 % branches (≥ 80 %). `src/modules/` aún sin código.
+- Ramas no cubiertas de `auditoria.js` (55-65): los `?? null` de `req.ip`, `req.correlationId` y `err?.code` (siempre definidos en la app real).

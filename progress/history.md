@@ -72,3 +72,14 @@
   - SPEC-07/08/09: `requiereRol` en cada ruta; `verificarCanal` + `verificarTitular` tras consultar la cuenta.
   - SPEC-07: convertir SEG-T06 en prueba real.
 - **Cierre:** feature 3 `done`. Próximo: SPEC-04 (auditoría).
+
+## 2026-10-30 — Feature 4: auditoria (SPEC-04)
+- **Agentes:** leader → desarrolladorback → tester → revisor.
+- **Cambios:** `src/core/middlewares/auditoria.js`, `src/core/repositories/auditoriaRepository.js`,
+  `db/04-auditoria.sql`, `tests/integration/auditoria/auditoria.test.js`.
+- **Verificación:** `bash init.sh` completo verde; 105 pruebas + 5 todo. Reales: AUD-T03, T05, T06, T07, T08.
+- **Veredicto:** APROBADO CON OBSERVACIONES (`progress/review_04.md`). Arrastrar:
+  - SPEC-07: convertir AUD-T01 (con `deposito_id` real), AUD-T02 (`monto` -5.00, ERROR_422) y AUD-T04.
+  - SPEC-06: prueba de `req.ip` con `X-Forwarded-For` y `trust proxy`; orden de montaje PIP-R11.
+  - SPEC-05/07: `res.locals.depositoId` siempre debe ser un id existente (si no, el INSERT falla y solo se loguea).
+- **Cierre:** feature 4 `done`. Próximo: SPEC-05 (idempotencia).
