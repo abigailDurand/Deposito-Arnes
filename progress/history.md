@@ -35,3 +35,14 @@
     + `GET /health` (criterio de SPEC-00 hoy inalcanzable: el mock y `server.js` no existen aún).
   - SPEC-01: al llegar las primeras pruebas de integración, quitar `--passWithNoTests` de `test:integration`.
 - **Cierre:** feature 0 `done`. Próximo: SPEC-01 (dominio).
+
+## 2026-10-30 — Feature 1: dominio (SPEC-01)
+- **Agentes:** leader → desarrolladorback → tester → revisor.
+- **Cambios:** `src/core/{db,errores,depositoMapper}.js`, `src/core/middlewares/manejadorErrores.js`,
+  `db/00-core.sql`, `tests/unit/dominio/*`, `tests/integration/dominio/transaccion.test.js`.
+- **Verificación:** `bash init.sh` completo verde; 42 pruebas + 1 todo.
+- **Veredicto:** APROBADO CON OBSERVACIONES (`progress/review_01.md`). Arrastrar:
+  - SPEC-06: el catálogo de errores es global; `crearApp` llamado varias veces no debe re-registrar códigos.
+  - SPEC-07/08: siempre pasar `extensiones` a `aJson`; SPEC-09: probar `aJson(fila)` sin extensiones.
+  - Pendiente de SPEC-00: `--passWithNoTests` en `package.json` (ningún §2 posterior permite tocarlo).
+- **Cierre:** feature 1 `done`. Próximo: SPEC-02 (integraciones).
