@@ -46,3 +46,17 @@
   - SPEC-07/08: siempre pasar `extensiones` a `aJson`; SPEC-09: probar `aJson(fila)` sin extensiones.
   - Pendiente de SPEC-00: `--passWithNoTests` en `package.json` (ningún §2 posterior permite tocarlo).
 - **Cierre:** feature 1 `done`. Próximo: SPEC-02 (integraciones).
+
+## 2026-10-30 — Feature 2: integraciones (SPEC-02)
+- **Agentes:** leader → desarrolladorback → tester → revisor.
+- **Cambios:** `src/core/clients/billeteraClient.js`, `mocks/billetera/{server.js,Dockerfile}`,
+  `tests/helpers/{billetera,tokens}.js`, `scripts/{generar-claves-dev,generar-token}.js`,
+  `tests/unit/integraciones/billeteraClient.test.js`.
+- **Verificación:** `bash init.sh` completo verde; 60 pruebas + 1 todo. Mock probado a mano con
+  `docker compose` (200/404, 201 y 409 al repetir).
+- **Veredicto:** APROBADO CON OBSERVACIONES (`progress/review_02.md`). Arrastrar:
+  - SPEC-07: los helpers de nock no conocen las cuentas especiales 999999/888888; simular fallos con
+    `acreditaFalla`/`acreditaLento` sobre cuentas normales.
+  - Para el equipo: titular de las cuentas especiales del mock no definido en §4 (llevar a P1/P3).
+  - SPEC-06: `deposito-service` en compose sigue sin poder arrancar hasta que exista `src/server.js`.
+- **Cierre:** feature 2 `done`. Próximo: SPEC-03 (seguridad).

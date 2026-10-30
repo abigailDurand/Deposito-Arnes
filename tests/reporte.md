@@ -109,3 +109,67 @@ All files             |   98.73 |    94.44 |    92.3 |   98.63 |
 - `src/core/`: ≥ 90 % en todas las métricas (umbral 80 % cumplido, sin cambios en `jest.config.js`).
 - Sin cubrir: `db.js:14` (listener `pool.on('error')` de conexión inactiva), `depositoMapper.js:24` (rama `aJson(fila)` sin `extensiones`, decisión del desarrollador ligada a HD-R08; se probará con SPEC-08), `errores.js:62` (rama `errores` nulo en `registrarErrores`).
 - `src/modules/`: sin código todavía.
+
+## SPEC-02
+
+- **Agente:** tester · **Fecha:** 2026-10-30 · **Feature:** 2 (`integraciones`)
+- **Ejecución:** `bash init.sh` completo → `EXIT=0` (PostgreSQL real arriba).
+  `[OK] SPEC-02: todos sus casos tienen prueba`. `Test Suites: 5 passed · Tests: 1 todo, 60 passed, 61 total`.
+- Ningún caso de SPEC-02 necesita PostgreSQL: todo es unitario con nock (`nock.disableNetConnect()`,
+  `nock.cleanAll()` + `nock.abortPendingRequests()` en cada prueba) usando los helpers de
+  `tests/helpers/billetera.js`. El mock Express (`mocks/billetera/`) es para pruebas manuales: sin pruebas automáticas.
+- **Timeouts sin esperar 5 s:** el cliente se carga en `jest.isolateModules` con
+  `BILLETERA_TIMEOUT_MS=100` solo en el `process.env` de esa carga (se restaura enseguida); nock
+  responde con demora de 1000 ms. Se comprueba que el error llega antes de la demora. No se tocó `config.js` ni `tests/setup/`.
+
+### Casos cubiertos (`tests/unit/integraciones/billeteraClient.test.js`)
+
+| Caso | Resultado |
+|---|---|
+| INT-T01 `consultarCuenta` 200 → `{ numero, estado, moneda, titularId }` exacto de §4 (+ cuentas `000003` BLOQUEADA y `000002` USD) | ✅ |
+| INT-T02 404 → `null` | ✅ |
+| INT-T03 500 → `ErrorApp` `BILLETERA_NO_DISPONIBLE` (502) | ✅ |
+| INT-T03 timeout → `BILLETERA_NO_DISPONIBLE` | ✅ |
+| INT-T04 `acreditar` 201 → resuelve `undefined` | ✅ |
+| INT-T04 `acreditar` 409 → resuelve `undefined` | ✅ |
+| INT-T05 400 y 500 → `BILLETERA_NO_DISPONIBLE`; `scope.peticiones` = 1 y un segundo interceptor idéntico queda sin usar (sin reintento) | ✅ |
+| INT-T05 timeout → `BILLETERA_NO_DISPONIBLE`; 1 sola petición (evento `request` de nock) y el interceptor de reintento sin usar | ✅ |
+| INT-T06 consultar y acreditar llevan `Authorization: Bearer token-de-prueba` y `X-Correlation-Id` (+ también en respuestas 404 y 500) | ✅ |
+| INT-T07 `monto: Decimal(150)` → body `{ depositoId, monto: "150.00", moneda: "PEN", concepto: "DEPOSITO" }` | ✅ |
+
+Pruebas extra (justificadas por reglas de SPEC-02), todas ✅:
+
+- INT-R04: consulta con 400 → error; 200 con cuerpo no objeto → error; error de red (`ECONNREFUSED`) → error.
+- INT-R05: `acreditar` con 200 → resuelve.
+- INT-R07: montos límite `"0.01"` → `"0.01"` y `Decimal("10.5")` → `"10.50"` (cuenta USD de §4); `concepto` siempre `DEPOSITO`.
+
+### Casos en `test.todo`
+
+Ninguno de SPEC-02. (Sigue PRY-T01 de SPEC-00, espera SPEC-06.) No había `test.todo` previos que esperaran SPEC-02.
+
+### Pruebas fallidas
+
+Ninguna.
+
+### Cobertura (`src/core/` y `src/modules/`)
+
+```
+----------------------|---------|----------|---------|---------|-------------------
+File                  | % Stmts | % Branch | % Funcs | % Lines | Uncovered Line #s
+----------------------|---------|----------|---------|---------|-------------------
+All files             |   99.05 |       94 |      95 |   98.97 |
+ core                 |   98.41 |    91.66 |    90.9 |    98.3 |
+  db.js               |   94.73 |      100 |      50 |   94.73 | 14
+  depositoMapper.js   |     100 |    83.33 |     100 |     100 | 24
+  errores.js          |     100 |    92.85 |     100 |     100 | 62
+  logger.js           |     100 |      100 |     100 |     100 |
+ core/clients         |     100 |    92.85 |     100 |     100 |
+  billeteraClient.js  |     100 |    92.85 |     100 |     100 | 45
+ core/middlewares     |     100 |      100 |     100 |     100 |
+  manejadorErrores.js |     100 |      100 |     100 |     100 |
+----------------------|---------|----------|---------|---------|-------------------
+```
+
+- `src/core/`: ≥ 90 % en todas las métricas (umbral 80 % cumplido). `billeteraClient.js` pasa de 0 % a 100 % líneas.
+- Sin cubrir en `billeteraClient.js:45`: rama `err.message` cuando un error de axios no trae `code` (solo afecta al detalle del log).
+- `src/modules/`: sin código todavía.
