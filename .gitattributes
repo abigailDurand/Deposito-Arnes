@@ -1,0 +1,2 @@
+# init.sh debe tener LF: con CRLF, bash falla en Windows y en Linux.
+*.sh text eol=lf
