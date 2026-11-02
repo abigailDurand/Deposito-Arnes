@@ -2,9 +2,11 @@
 
 const { createHash } = require('node:crypto');
 const express = require('express');
+const nock = require('nock');
 const request = require('supertest');
 
 const config = require('../../../src/config');
+const { crearApp } = require('../../../src/app');
 const { pool: poolApp } = require('../../../src/core/db');
 const { ErrorApp, manejar } = require('../../../src/core/errores');
 const { logger } = require('../../../src/core/logger');
@@ -14,6 +16,7 @@ const { autenticar } = require('../../../src/core/middlewares/auth');
 const idempotencia = require('../../../src/core/middlewares/idempotencia');
 const manejadorErrores = require('../../../src/core/middlewares/manejadorErrores');
 const limpiarClaves = require('../../../src/core/tareas/limpiarClaves');
+const billetera = require('../../helpers/billetera');
 const { limpiar, cerrar, pool } = require('../../helpers/db');
 const { token } = require('../../helpers/tokens');
 
@@ -168,14 +171,231 @@ describe('SPEC-05 idempotencia: casos', () => {
     expect(await claves()).toHaveLength(0);
   });
 
-  test.todo('IDE-T02 repetir el mismo POST → mismo status y cuerpo, Idempotency-Replayed: true, billetera llamada 1 vez (requiere SPEC-07)');
-  test.todo('IDE-T03 misma clave, monto distinto → 409 IDEMPOTENCY_KEY_REUTILIZADA (requiere SPEC-07)');
-  test.todo('IDE-T04 billetera tarda 2 s; segundo POST a los 100 ms → 409 SOLICITUD_EN_PROCESO (requiere SPEC-07)');
-  test.todo('IDE-T05 5 POST simultáneos con la misma clave → 1 depósito, 1 acreditación (requiere SPEC-07)');
-  test.todo('IDE-T06 billetera 500 al acreditar, luego reintento OK → 502 y luego 201 con el mismo id; billetera recibió el mismo depositoId (requiere SPEC-07)');
-  test.todo('IDE-T07 billetera timeout, luego reintento y billetera 409 → 201 COMPLETADO (requiere SPEC-07)');
-  test.todo('IDE-T08 billetera 500 al consultar la cuenta, luego reintento → 502 y luego se procesa como nuevo (requiere SPEC-07)');
-  test.todo('IDE-T10 usr-agente-1 y usr-agente-2 con la misma clave → ambos se procesan (requiere SPEC-07)');
+});
+
+// SPEC-07 ya existe: estos casos usan la ruta real con crearApp, PostgreSQL real y billetera con nock.
+// Todas las extensiones inactivas; el pipeline es un singleton y cada prueba arma su app.
+describe('SPEC-05 idempotencia: casos con la ruta real (SPEC-07)', () => {
+  const MANIFEST = {
+    version: 1,
+    servicio: 'deposito-service',
+    features: [
+      { id: 'registrar-deposito', estado: 'activo', tipo: 'endpoint' },
+      { id: 'limites-por-canal', estado: 'inactivo', tipo: 'validador', orden: 10 },
+      { id: 'conversion-moneda', estado: 'inactivo', tipo: 'transformador', orden: 10 },
+      { id: 'alerta-uif', estado: 'inactivo', tipo: 'post-proceso', orden: 10 },
+    ],
+  };
+
+  async function depositos() {
+    const { rows } = await pool.query('SELECT id, estado, usuario_id FROM depositos ORDER BY creado_en');
+    return rows;
+  }
+
+  beforeAll(() => {
+    nock.disableNetConnect();
+    nock.enableNetConnect(/127\.0\.0\.1|localhost/);
+  });
+
+  beforeEach(() => {
+    nock.cleanAll();
+  });
+
+  afterEach(() => {
+    nock.abortPendingRequests();
+    nock.cleanAll();
+  });
+
+  afterAll(() => {
+    nock.enableNetConnect();
+  });
+
+  test('IDE-T02 repetir el mismo POST → mismo status y cuerpo, Idempotency-Replayed: true, billetera llamada 1 vez', async () => {
+    const appReal = crearApp({ manifest: MANIFEST });
+    const consulta = billetera.cuentaActiva(CUENTA);
+    const credito = billetera.acreditaOk(CUENTA);
+
+    const primera = await post('usr-agente-1', { appUsada: appReal, correlation: 'ide-t02-a' });
+    const segunda = await post('usr-agente-1', { appUsada: appReal, correlation: 'ide-t02-b' });
+
+    expect(primera.status).toBe(201);
+    expect(primera.headers['idempotency-replayed']).toBeUndefined();
+    expect(segunda.status).toBe(201);
+    expect(segunda.body).toEqual(primera.body);
+    expect(segunda.headers['idempotency-replayed']).toBe('true');
+    expect(segunda.headers['x-correlation-id']).toBe('ide-t02-b');
+    expect(consulta.peticiones).toHaveLength(1);
+    expect(credito.peticiones).toHaveLength(1);
+    expect(credito.peticiones[0].body.depositoId).toBe(primera.body.id);
+    expect(await depositos()).toEqual([
+      expect.objectContaining({ id: primera.body.id, estado: 'COMPLETADO' }),
+    ]);
+  });
+
+  test('IDE-T03 misma clave, monto distinto → 409 IDEMPOTENCY_KEY_REUTILIZADA', async () => {
+    const appReal = crearApp({ manifest: MANIFEST });
+    billetera.cuentaActiva(CUENTA);
+    const credito = billetera.acreditaOk(CUENTA);
+
+    const primera = await post('usr-agente-1', { appUsada: appReal });
+    const segunda = await post('usr-agente-1', {
+      appUsada: appReal, body: { ...BODY, monto: '200.00' }, correlation: 'ide-t03',
+    });
+
+    expect(primera.status).toBe(201);
+    expect(segunda.status).toBe(409);
+    expect(segunda.body).toEqual({
+      codigo: 'IDEMPOTENCY_KEY_REUTILIZADA',
+      mensaje: 'Clave usada antes con otros datos.',
+      correlationId: 'ide-t03',
+    });
+    expect(credito.peticiones).toHaveLength(1);
+    expect(await depositos()).toHaveLength(1);
+  });
+
+  test('IDE-T04 billetera tarda 2 s; segundo POST a los 100 ms → 409 SOLICITUD_EN_PROCESO; el primero termina 201', async () => {
+    const appReal = crearApp({ manifest: MANIFEST });
+    billetera.cuentaActiva(CUENTA);
+    const credito = billetera.acreditaLento(CUENTA, { demora: 2000 });
+
+    const inicio = Date.now();
+    const primera = post('usr-agente-1', { appUsada: appReal }).then((r) => r);
+    await esperar(100);
+    const segunda = await post('usr-agente-1', { appUsada: appReal, correlation: 'ide-t04' });
+
+    expect(segunda.status).toBe(409);
+    expect(segunda.body).toEqual({
+      codigo: 'SOLICITUD_EN_PROCESO',
+      mensaje: 'La solicitud original con esa clave aún se procesa.',
+      correlationId: 'ide-t04',
+    });
+    const r1 = await primera;
+    expect(Date.now() - inicio).toBeGreaterThanOrEqual(1900);
+    expect(r1.status).toBe(201);
+    expect(r1.body.estado).toBe('COMPLETADO');
+    expect(credito.peticiones).toHaveLength(1);
+    expect(await depositos()).toHaveLength(1);
+  }, 10000);
+
+  test('IDE-T05 5 POST simultáneos con la misma clave → 1 depósito, 1 acreditación', async () => {
+    const appReal = crearApp({ manifest: MANIFEST });
+    const consulta = billetera.cuentaActiva(CUENTA);
+    const credito = billetera.acreditaOk(CUENTA);
+
+    const respuestas = await Promise.all(
+      Array.from({ length: 5 }, () => post('usr-agente-1', { appUsada: appReal })),
+    );
+
+    const originales = respuestas.filter((r) => r.status === 201 && !r.headers['idempotency-replayed']);
+    expect(originales).toHaveLength(1);
+    for (const r of respuestas) {
+      if (r.status === 201) {
+        expect(r.body).toEqual(originales[0].body);
+      } else {
+        expect(r.status).toBe(409);
+        expect(r.body.codigo).toBe('SOLICITUD_EN_PROCESO');
+      }
+    }
+    expect(consulta.peticiones).toHaveLength(1);
+    expect(credito.peticiones).toHaveLength(1);
+    expect(await depositos()).toHaveLength(1);
+    expect(await claves()).toEqual([
+      expect.objectContaining({ estado: 'TERMINADO', status_http: 201, deposito_id: originales[0].body.id }),
+    ]);
+  });
+
+  test('IDE-T06 billetera 500 al acreditar, luego reintento y billetera OK → 502, luego 201 con el mismo id; billetera recibió el mismo depositoId', async () => {
+    const appReal = crearApp({ manifest: MANIFEST });
+    const consulta = billetera.cuentaActiva(CUENTA);
+    const fallo = billetera.acreditaFalla(CUENTA, { status: 500 });
+
+    const primera = await post('usr-agente-1', { appUsada: appReal });
+
+    expect(primera.status).toBe(502);
+    expect(primera.body.codigo).toBe('BILLETERA_NO_DISPONIBLE');
+    const [fallido] = await depositos();
+    expect(fallido.estado).toBe('FALLIDO');
+    expect((await claves())[0]).toMatchObject({ estado: 'REINTENTABLE', deposito_id: fallido.id });
+
+    const ok = billetera.acreditaOk(CUENTA);
+    const segunda = await post('usr-agente-1', { appUsada: appReal });
+
+    expect(segunda.status).toBe(201);
+    expect(segunda.headers['idempotency-replayed']).toBeUndefined();
+    expect(segunda.body).toMatchObject({ id: fallido.id, estado: 'COMPLETADO', extensiones: {} });
+    expect(fallo.peticiones[0].body.depositoId).toBe(fallido.id);
+    expect(ok.peticiones[0].body.depositoId).toBe(fallido.id);
+    expect(consulta.peticiones).toHaveLength(1);
+    expect(await depositos()).toEqual([expect.objectContaining({ id: fallido.id, estado: 'COMPLETADO' })]);
+    expect((await claves())[0]).toMatchObject({ estado: 'TERMINADO', status_http: 201, deposito_id: fallido.id });
+  });
+
+  test('IDE-T07 billetera timeout, luego reintento y billetera 409 → 201 COMPLETADO', async () => {
+    const appReal = crearApp({ manifest: MANIFEST });
+    billetera.cuentaActiva(CUENTA);
+    billetera.acreditaLento(CUENTA, { demora: 6000 });
+
+    const primera = await post('usr-agente-1', { appUsada: appReal });
+
+    expect(primera.status).toBe(502);
+    expect(primera.body.codigo).toBe('BILLETERA_NO_DISPONIBLE');
+    const [fallido] = await depositos();
+    expect(fallido.estado).toBe('FALLIDO');
+
+    const yaExiste = billetera.acreditaYaExiste(CUENTA);
+    const segunda = await post('usr-agente-1', { appUsada: appReal });
+
+    expect(segunda.status).toBe(201);
+    expect(segunda.body).toMatchObject({ id: fallido.id, estado: 'COMPLETADO' });
+    expect(yaExiste.peticiones[0].body.depositoId).toBe(fallido.id);
+    expect(await depositos()).toEqual([expect.objectContaining({ id: fallido.id, estado: 'COMPLETADO' })]);
+  }, 20000);
+
+  test('IDE-T08 billetera 500 al consultar la cuenta, luego reintento → 502, luego se procesa como nuevo', async () => {
+    const appReal = crearApp({ manifest: MANIFEST });
+    billetera.consultaFalla(CUENTA, { status: 500 });
+
+    const primera = await post('usr-agente-1', { appUsada: appReal });
+
+    expect(primera.status).toBe(502);
+    expect(primera.body.codigo).toBe('BILLETERA_NO_DISPONIBLE');
+    expect(await depositos()).toHaveLength(0);
+    expect(await claves()).toHaveLength(0);
+
+    const consulta = billetera.cuentaActiva(CUENTA);
+    const credito = billetera.acreditaOk(CUENTA);
+    const segunda = await post('usr-agente-1', { appUsada: appReal });
+
+    expect(segunda.status).toBe(201);
+    expect(segunda.headers['idempotency-replayed']).toBeUndefined();
+    expect(segunda.body.estado).toBe('COMPLETADO');
+    expect(consulta.peticiones).toHaveLength(1);
+    expect(credito.peticiones).toHaveLength(1);
+    expect(await depositos()).toEqual([expect.objectContaining({ id: segunda.body.id, estado: 'COMPLETADO' })]);
+  });
+
+  test('IDE-T10 usr-agente-1 y usr-agente-2 con la misma clave → ambos se procesan', async () => {
+    const appReal = crearApp({ manifest: MANIFEST });
+    billetera.cuentaActiva(CUENTA);
+    billetera.cuentaActiva(CUENTA);
+    const credito1 = billetera.acreditaOk(CUENTA);
+    const credito2 = billetera.acreditaOk(CUENTA);
+
+    const r1 = await post('usr-agente-1', { appUsada: appReal });
+    const r2 = await post('usr-agente-2', { appUsada: appReal });
+
+    expect(r1.status).toBe(201);
+    expect(r2.status).toBe(201);
+    expect(r2.headers['idempotency-replayed']).toBeUndefined();
+    expect(r2.body.id).not.toBe(r1.body.id);
+    expect(credito1.peticiones).toHaveLength(1);
+    expect(credito2.peticiones).toHaveLength(1);
+    const filas = await depositos();
+    expect(filas.map((f) => f.usuario_id).sort()).toEqual(['usr-agente-1', 'usr-agente-2']);
+    expect((await claves()).map((c) => [c.usuario_id, c.clave])).toEqual([
+      ['usr-agente-1', CLAVE], ['usr-agente-2', CLAVE],
+    ]);
+  });
 });
 
 describe('SPEC-05 idempotencia: reglas con controller falso (sin SPEC-07)', () => {

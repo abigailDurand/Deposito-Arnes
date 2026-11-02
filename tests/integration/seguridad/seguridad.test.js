@@ -3,9 +3,13 @@
 const crypto = require('node:crypto');
 const { Writable } = require('node:stream');
 const express = require('express');
+const nock = require('nock');
 const request = require('supertest');
 
-const { limpiar, cerrar } = require('../../helpers/db');
+const { crearApp } = require('../../../src/app');
+const { pool: poolApp } = require('../../../src/core/db');
+const billetera = require('../../helpers/billetera');
+const { limpiar, cerrar, pool } = require('../../helpers/db');
 const { token } = require('../../helpers/tokens');
 
 const CUENTA = '0011-0123-456789';
@@ -60,7 +64,10 @@ afterEach(() => {
   jest.restoreAllMocks();
 });
 
-afterAll(cerrar);
+afterAll(async () => {
+  await poolApp.end();
+  await cerrar();
+});
 
 describe('autenticar (SEG-R04 a SEG-R08)', () => {
   test('SEG-T01 sin header Authorization → 401 TOKEN_REQUERIDO', async () => {
@@ -193,8 +200,89 @@ describe('requiereRol (SEG-R09)', () => {
   });
 });
 
+// SPEC-07 ya existe: ruta real con crearApp, PostgreSQL real y billetera con nock (extensiones inactivas).
 describe('SEG-T06 titular de la cuenta', () => {
-  test.todo('SEG-T06 usr-cliente-1 deposita a 0011-0123-000002 → 403; billetera no recibe acreditación (requiere SPEC-07)');
+  const CUENTA_AJENA = '0011-0123-000002';
+  const MANIFEST = {
+    version: 1,
+    servicio: 'deposito-service',
+    features: [
+      { id: 'registrar-deposito', estado: 'activo', tipo: 'endpoint' },
+      { id: 'limites-por-canal', estado: 'inactivo', tipo: 'validador', orden: 10 },
+      { id: 'conversion-moneda', estado: 'inactivo', tipo: 'transformador', orden: 10 },
+      { id: 'alerta-uif', estado: 'inactivo', tipo: 'post-proceso', orden: 10 },
+    ],
+  };
+
+  beforeAll(() => {
+    nock.disableNetConnect();
+    nock.enableNetConnect(/127\.0\.0\.1|localhost/);
+  });
+
+  afterEach(() => {
+    nock.abortPendingRequests();
+    nock.cleanAll();
+  });
+
+  afterAll(() => {
+    nock.enableNetConnect();
+  });
+
+  test('SEG-T06 usr-cliente-1 deposita a 0011-0123-000002 → 403; billetera no recibe acreditación', async () => {
+    const app = crearApp({ manifest: MANIFEST });
+    // La cuenta es USD y ACTIVA: si no fuera por el titular, el depósito pasaría.
+    const consulta = billetera.cuentaActiva(CUENTA_AJENA);
+    const credito = billetera.acreditaOk(CUENTA_AJENA);
+
+    const res = await request(app)
+      .post('/api/v1/depositos')
+      .set(bearer(token('usr-cliente-1')))
+      .set('Idempotency-Key', 'seg-t06-clave')
+      .set('X-Correlation-Id', 'seg-t06')
+      .send({ cuentaDestino: CUENTA_AJENA, monto: '100.00', moneda: 'USD', canal: 'APP' });
+
+    expect(res.status).toBe(403);
+    expect(res.body).toEqual({
+      codigo: 'SIN_PERMISO',
+      mensaje: 'El rol o la cuenta no permiten la operación.',
+      correlationId: 'seg-t06',
+    });
+    expect(consulta.peticiones).toHaveLength(1);
+    expect(credito.peticiones).toHaveLength(0);
+    const { rows } = await pool.query('SELECT id FROM depositos');
+    expect(rows).toHaveLength(0);
+
+    // La auditoría escribe después de responder: se espera su fila antes de terminar la prueba.
+    let auditadas = [];
+    for (let i = 0; i < 50 && auditadas.length === 0; i += 1) {
+      ({ rows: auditadas } = await pool.query('SELECT resultado, usuario_id FROM auditoria_depositos'));
+      if (auditadas.length === 0) await new Promise((r) => { setTimeout(r, 20); });
+    }
+    expect(auditadas).toEqual([{ resultado: 'ERROR_403', usuario_id: 'usr-cliente-1' }]);
+  });
+
+  test('SEG-T06 control: usr-cliente-1 deposita por APP a su cuenta 0011-0123-456789 → 201 y una acreditación', async () => {
+    const app = crearApp({ manifest: MANIFEST });
+    billetera.cuentaActiva(CUENTA);
+    const credito = billetera.acreditaOk(CUENTA);
+
+    const res = await request(app)
+      .post('/api/v1/depositos')
+      .set(bearer(token('usr-cliente-1')))
+      .set('Idempotency-Key', 'seg-t06-control')
+      .send({ cuentaDestino: CUENTA, monto: '100.00', moneda: 'PEN', canal: 'APP' });
+
+    expect(res.status).toBe(201);
+    expect(res.body.estado).toBe('COMPLETADO');
+    expect(credito.peticiones).toHaveLength(1);
+
+    let auditadas = [];
+    for (let i = 0; i < 50 && auditadas.length === 0; i += 1) {
+      ({ rows: auditadas } = await pool.query('SELECT resultado FROM auditoria_depositos'));
+      if (auditadas.length === 0) await new Promise((r) => { setTimeout(r, 20); });
+    }
+    expect(auditadas).toEqual([{ resultado: 'EXITO' }]);
+  });
 });
 
 describe('correlationId (SEG-R01, SEG-R02)', () => {

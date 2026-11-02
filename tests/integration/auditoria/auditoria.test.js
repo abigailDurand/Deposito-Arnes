@@ -1,7 +1,11 @@
 'use strict';
 
 const express = require('express');
+const nock = require('nock');
 const request = require('supertest');
+
+const { crearApp } = require('../../../src/app');
+const billetera = require('../../helpers/billetera');
 
 const { pool: poolApp } = require('../../../src/core/db');
 const { logger } = require('../../../src/core/logger');
@@ -66,10 +70,114 @@ afterAll(async () => {
   await cerrar();
 });
 
-describe('SPEC-04 auditoría', () => {
-  test.todo('AUD-T01 depósito válido → 1 fila CREAR_DEPOSITO, EXITO, deposito_id lleno, correlation_id = el de la respuesta (requiere SPEC-07)');
+// SPEC-07 ya existe: AUD-T01, AUD-T02 y AUD-T04 usan la ruta real (crearApp), PostgreSQL real y
+// billetera con nock. Extensiones inactivas; cada prueba arma su app (el pipeline es un singleton).
+const MANIFEST_REAL = {
+  version: 1,
+  servicio: 'deposito-service',
+  features: [
+    { id: 'registrar-deposito', estado: 'activo', tipo: 'endpoint' },
+    { id: 'limites-por-canal', estado: 'inactivo', tipo: 'validador', orden: 10 },
+    { id: 'conversion-moneda', estado: 'inactivo', tipo: 'transformador', orden: 10 },
+    { id: 'alerta-uif', estado: 'inactivo', tipo: 'post-proceso', orden: 10 },
+  ],
+};
+const BODY_REAL = { cuentaDestino: CUENTA, monto: '150.00', moneda: 'PEN', canal: 'AGENTE' };
 
-  test.todo('AUD-T02 monto "-5" → 1 fila ERROR_422, deposito_id nulo, monto -5.00 (requiere SPEC-07)');
+function postReal(appReal, { body = BODY_REAL, clave = 'aud-clave-0001', correlation } = {}) {
+  let r = request(appReal)
+    .post('/api/v1/depositos')
+    .set(bearer(token('usr-agente-1')))
+    .set('Idempotency-Key', clave);
+  if (correlation) r = r.set('X-Correlation-Id', correlation);
+  return r.send(body);
+}
+
+describe('SPEC-04 auditoría con la ruta real (SPEC-07)', () => {
+  beforeAll(() => {
+    nock.disableNetConnect();
+    nock.enableNetConnect(/127\.0\.0\.1|localhost/);
+  });
+
+  beforeEach(() => {
+    nock.cleanAll();
+  });
+
+  afterEach(() => {
+    nock.abortPendingRequests();
+    nock.cleanAll();
+  });
+
+  afterAll(() => {
+    nock.enableNetConnect();
+  });
+
+  test('AUD-T01 depósito válido → 1 fila CREAR_DEPOSITO, EXITO, deposito_id lleno, correlation_id igual al de la respuesta', async () => {
+    const appReal = crearApp({ manifest: MANIFEST_REAL });
+    billetera.cuentaActiva(CUENTA);
+    billetera.acreditaOk(CUENTA);
+
+    const res = await postReal(appReal);
+
+    expect(res.status).toBe(201);
+    const filas = await filasAuditoria(1);
+    expect(filas).toHaveLength(1);
+    expect(filas[0]).toMatchObject({
+      accion: 'CREAR_DEPOSITO',
+      resultado: 'EXITO',
+      deposito_id: res.body.id,
+      usuario_id: 'usr-agente-1',
+      canal: 'AGENTE',
+      monto: '150.00',
+      correlation_id: res.headers['x-correlation-id'],
+    });
+    expect(filas[0].correlation_id).toEqual(expect.any(String));
+  });
+
+  test('AUD-T02 monto "-5" → 1 fila ERROR_422, deposito_id nulo, monto -5.00', async () => {
+    const appReal = crearApp({ manifest: MANIFEST_REAL });
+    const consulta = billetera.cuentaActiva(CUENTA);
+
+    const res = await postReal(appReal, { body: { ...BODY_REAL, monto: '-5' }, correlation: 'aud-t02' });
+
+    expect(res.status).toBe(422);
+    expect(res.body.codigo).toBe('MONTO_INVALIDO');
+    expect(consulta.peticiones).toHaveLength(0);
+    const filas = await filasAuditoria(1);
+    expect(filas).toHaveLength(1);
+    expect(filas[0]).toMatchObject({
+      accion: 'CREAR_DEPOSITO',
+      resultado: 'ERROR_422',
+      deposito_id: null,
+      usuario_id: 'usr-agente-1',
+      monto: '-5.00',
+      correlation_id: 'aud-t02',
+    });
+  });
+
+  test('AUD-T04 3 POST iguales con la misma clave → 3 filas CREAR_DEPOSITO con el mismo deposito_id; 1 solo depósito', async () => {
+    const appReal = crearApp({ manifest: MANIFEST_REAL });
+    billetera.cuentaActiva(CUENTA);
+    const credito = billetera.acreditaOk(CUENTA);
+
+    const respuestas = [];
+    for (let i = 0; i < 3; i += 1) respuestas.push(await postReal(appReal));
+
+    expect(respuestas.map((r) => r.status)).toEqual([201, 201, 201]);
+    const id = respuestas[0].body.id;
+    expect(respuestas.map((r) => r.headers['idempotency-replayed'])).toEqual([undefined, 'true', 'true']);
+    expect(credito.peticiones).toHaveLength(1);
+    const filas = await filasAuditoria(3);
+    expect(filas).toHaveLength(3);
+    for (const fila of filas) {
+      expect(fila).toMatchObject({ accion: 'CREAR_DEPOSITO', resultado: 'EXITO', deposito_id: id });
+    }
+    const { rows } = await pool.query('SELECT id FROM depositos');
+    expect(rows).toEqual([{ id }]);
+  });
+});
+
+describe('SPEC-04 auditoría', () => {
 
   test('AUD-T03 POST /api/v1/depositos sin token → 1 fila CREAR_DEPOSITO ERROR_401 con usuario_id nulo', async () => {
     const res = await request(app)
@@ -92,8 +200,6 @@ describe('SPEC-04 auditoría', () => {
     expect(typeof filas[0].ip).toBe('string');
     expect(filas[0].creado_en).toBeInstanceOf(Date);
   });
-
-  test.todo('AUD-T04 3 POST iguales con la misma clave → 3 filas CREAR_DEPOSITO con el mismo deposito_id; 1 solo depósito (requiere SPEC-05 y SPEC-07)');
 
   test('AUD-T05 UPDATE y DELETE directos en SQL → ambos lanzan excepción; TRUNCATE sí limpia', async () => {
     await pool.query(

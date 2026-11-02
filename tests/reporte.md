@@ -13,6 +13,7 @@
 | PRY-T02 (`cargarConfig` sin `DATABASE_URL` → error con `DATABASE_URL`) | `tests/core/proyecto.test.js` | ✅ |
 | PRY-T02 (`require('src/config')` sin `DATABASE_URL` en `process.env` → lanza, el servicio no arranca) | `tests/core/proyecto.test.js` | ✅ |
 | PRY-T03 (`enmascararCuenta('0011-0123-456789')` → `'****-****-456789'`) | `tests/core/proyecto.test.js` | ✅ |
+| PRY-T01 (`GET /health` sin token → 200 `{ "estado": "ok" }`) — convertido en prueba real con SPEC-06 (`crearApp`) | `tests/core/proyecto.test.js` | ✅ |
 
 Pruebas extra (sin id, justificadas en SPEC-00 §2/§5 y PRY-R06/R10), mismo archivo, todas ✅:
 
@@ -26,9 +27,8 @@ Pruebas extra (sin id, justificadas en SPEC-00 §2/§5 y PRY-R06/R10), mismo arc
 
 ### Casos en `test.todo`
 
-| Caso | Espera |
-|---|---|
-| PRY-T01 `GET /health` sin token → 200 `{ "estado": "ok" }` | SPEC-06 (`crearApp` y ruta `/health`) |
+Ninguno. PRY-T01 (esperaba SPEC-06) **ya no es `test.todo`**: se convirtió en prueba real al probar
+SPEC-06 (ver `## SPEC-06`) y sigue verde en la corrida de SPEC-07 (`bash init.sh` completo, 2026-11-02).
 
 ### Pruebas fallidas
 
@@ -482,3 +482,122 @@ Tests:       12 todo, 177 passed, 189 total
   (≥ 80 %). `cargador.js` 100 %; `pipeline.js` 98 % stmts / 100 % líneas. `src/modules/` aún sin código.
 - Ramas no cubiertas de `pipeline.js`: los `?? null` defensivos (`correlationId`, `actual?.id`, `deposito?.id`,
   `err?.message`) y el `catch` de `ejecutarPostProcesos` cuando falla el propio `contextoDe` (línea 106).
+
+## SPEC-07
+
+- **Tester** · 2026-11-02 · Feature 7 (`registrar-deposito`).
+- **Ejecución:** `bash init.sh` completo con PostgreSQL real (`deposito_test`) → **`EXIT=0`**.
+  `[OK] SPEC-07: todos sus casos tienen prueba` · alcance OK (129 archivos) ·
+  `Test Suites: 14 passed, 14 total` · `Tests: 234 passed, 234 total` (**0 `todo`**).
+- Integración: `crearApp({ manifest })` armada **dentro de cada prueba** (el pipeline es un singleton), manifest a
+  medida con `registrar-deposito` activo y `limites-por-canal`, `conversion-moneda`, `alerta-uif` **inactivas**
+  (SPEC-07 §6). Billetera siempre con los helpers de nock de SPEC-02 (`nock.disableNetConnect()`, solo
+  `127.0.0.1` permitido para Supertest). Datos solo de SPEC-02 §4. `limpiar()` en `beforeEach`.
+- Unitarias: el service con todas sus dependencias espiadas (`billeteraClient`, `permisos`, `pipeline`,
+  `db.enTransaccion`, `repository`); el repository con un `db` simulado.
+
+### Casos cubiertos
+
+| Caso | Archivo(s) |
+|---|---|
+| RD-T01 `usr-agente-1` `"150.00"` PEN AGENTE → 201 COMPLETADO (cuerpo exacto de §5, `extensiones: {}`); 1 fila; billetera recibió `{ depositoId, monto: "150.00", moneda, concepto }` 1 vez; clave `TERMINADO` | `tests/integration/registrar-deposito/registrar.test.js` |
+| RD-T02 `"0"`, `"-1"`, `"10.001"` → 422 `MONTO_INVALIDO`; 0 filas; billetera no llamada | integración + `tests/unit/registrar-deposito/service.test.js` |
+| RD-T03 `"0.01"` → 201; billetera recibe `"0.01"` | integración + unitaria |
+| RD-T04 sin `cuentaDestino` / monto número `150` / `"x": 1` → 400 `FORMATO_INVALIDO`; 0 filas; billetera no llamada | integración |
+| RD-T05 billetera 404 al consultar → 422 `CUENTA_NO_ENCONTRADA` | integración + unitaria |
+| RD-T06 `0011-0123-000003` BLOQUEADA → 422 `CUENTA_INACTIVA` | integración + unitaria |
+| RD-T07 billetera 500 al acreditar → 502; depósito FALLIDO; clave `REINTENTABLE` con el `deposito_id` | integración + unitaria (`ErrorApp` con `depositoId`) |
+| RD-T08 billetera tarda 6 s al acreditar → 502; depósito FALLIDO | integración |
+| RD-T09 billetera 500 al consultar → 502; 0 filas; sin acreditación; la clave se borra | integración + unitaria |
+| RD-T10 `"100.00"` USD a cuenta PEN → 422 `MONEDA_NO_SOPORTADA`; 0 filas | integración + unitaria |
+| RD-T11 spy de `cambiarEstado` → `(pool, id, PENDIENTE, PROCESANDO)` y luego `(pool, id, PROCESANDO, COMPLETADO)` | integración (BD real) + unitaria |
+| RD-T12 `reintentar` de un FALLIDO con billetera OK → mismo `id`, COMPLETADO, sin `consultarCuenta`, sin validadores/transformadores | integración (BD real, `service.reintentar`) + unitaria |
+
+Pruebas adicionales por regla (todas ✅):
+
+- **Feature activa/inactiva:** `registrar-deposito` `inactivo` en el manifest → 404 `RUTA_NO_ENCONTRADA`, billetera
+  no llamada (integración); activa → todos los casos anteriores.
+- **RD-R01/R02:** cuenta mal formada, `"150,00"`, 14 dígitos enteros, `EUR`, `WEB`, referencia vacía / de 141 /
+  no string, body arreglo → 400; referencia de 140 y `"1234567890123.45"` → 201.
+- **RD-R03/R05:** `deposito` con id UUID v4, `monto`/`montoAcreditar` `Decimal`, `referencia ?? null`,
+  `extensiones: {}`; `contexto` con `usuario`, `cuenta`, `correlationId`, `logger`, `db = pool`; el **mismo** objeto
+  `contexto` llega a validadores, transformadores, `persistirTransformadores` y post-procesos (PIP-R07).
+- **RD-R04:** orden exacto del diagrama registrado paso a paso (consulta → canal → titular → validadores →
+  transformadores → BEGIN → insertar → persistir → COMMIT → PENDIENTE→PROCESANDO → acreditar → COMPLETADO →
+  post-procesos); `insertar` y `persistir` reciben el `tx`.
+- **RD-R06:** con BD real, `cambiarEstado` desde un estado que no es el actual → lanza y la fila no cambia;
+  transiciones fuera de SPEC-01 → lanzan sin consulta; `actualizado_en` se actualiza; `buscarPorId` inexistente → `null`.
+- **RD-R07:** `persistirTransformadores` falla después del INSERT → 500 `ERROR_INTERNO`, **0 filas** (rollback real),
+  billetera no llamada, la clave se borra. Unitaria: el INSERT falla → ni `acreditar` ni `cambiarEstado`.
+- **RD-R08:** reintento de COMPLETADO → se devuelve sin billetera; de PENDIENTE/PROCESANDO → 409
+  `SOLICITUD_EN_PROCESO` con `depositoId`, estado intacto; de FALLIDO → acredita `monto_acreditar` /
+  `moneda_acreditar` guardados (p. ej. `149.50`), post-procesos con `contexto.cuenta = null`; si vuelve a fallar →
+  FALLIDO y 502 con `depositoId`; si `leerExtensiones` falla → no cambia de estado ni acredita; id inexistente → `Error` (500).
+- **RD-R09:** un transformador que agrega `extensiones` y cambia `montoAcreditar`/`monedaAcreditar` → se acredita lo
+  transformado, se guarda el monto original y la respuesta trae las `extensiones`; en el reintento,
+  `extensiones = leerExtensiones`.
+- **SEG-R10/R11 sobre la ruta real:** AGENTE con canal APP → 403 sin filas ni acreditación; `usr-cliente-1` por APP a
+  su cuenta → 201; `usr-cajero-1` por VENTANILLA a `0011-0123-000002` (USD) → 201.
+- `acreditar` que lanza algo que no es `ErrorApp` → se relanza tal cual, no pasa a FALLIDO (decisión 4 de impl_07).
+- `index.js` cumple el contrato de endpoint de SPEC-06 §4.
+
+### `test.todo` anteriores revisados (desbloqueados por SPEC-07) → todos son pruebas reales
+
+| Caso | Archivo |
+|---|---|
+| SEG-T06 `usr-cliente-1` deposita a `0011-0123-000002` (USD, ACTIVA) → 403 `SIN_PERMISO`; billetera consultada pero sin acreditación; 0 filas; auditoría `ERROR_403`. Control: a su propia cuenta → 201 | `tests/integration/seguridad/seguridad.test.js` |
+| AUD-T01 depósito válido → 1 fila `CREAR_DEPOSITO`, `EXITO`, `deposito_id` = id de la respuesta, `correlation_id` = header de la respuesta, canal y monto | `tests/integration/auditoria/auditoria.test.js` |
+| AUD-T02 monto `"-5"` → 422; 1 fila `ERROR_422`, `deposito_id` nulo, `monto` `-5.00`; billetera no consultada | `tests/integration/auditoria/auditoria.test.js` |
+| AUD-T04 3 POST iguales con la misma clave → 3×201 (2 con `Idempotency-Replayed`), 3 filas `CREAR_DEPOSITO` con el mismo `deposito_id`, 1 depósito, 1 acreditación | `tests/integration/auditoria/auditoria.test.js` |
+| IDE-T02 repetir → mismo status y cuerpo, `Idempotency-Replayed: true`, `X-Correlation-Id` de la petición actual, billetera 1 vez | `tests/integration/idempotencia/idempotencia.test.js` |
+| IDE-T03 misma clave, monto distinto → 409 `IDEMPOTENCY_KEY_REUTILIZADA` (cuerpo exacto); 1 depósito | idem |
+| IDE-T04 billetera tarda 2 s; segundo POST a los 100 ms → 409 `SOLICITUD_EN_PROCESO`; el primero termina 201 | idem |
+| IDE-T05 5 POST simultáneos → exactamente 1 respuesta original 201, el resto 201 repetida o 409 `SOLICITUD_EN_PROCESO`; 1 depósito, 1 consulta, 1 acreditación | idem |
+| IDE-T06 billetera 500 al acreditar → 502 (FALLIDO, clave `REINTENTABLE`); reintento OK → 201 con el **mismo** id; billetera recibió el mismo `depositoId` las dos veces; 1 sola consulta de cuenta | idem |
+| IDE-T07 timeout al acreditar → 502; reintento con billetera 409 → 201 COMPLETADO, mismo id | idem |
+| IDE-T08 billetera 500 al consultar → 502, sin filas y clave borrada; reintento → se procesa como nuevo (201 sin `Idempotency-Replayed`) | idem |
+| IDE-T10 `usr-agente-1` y `usr-agente-2` con la misma clave → ambos 201, ids distintos, 2 acreditaciones, 2 claves | idem |
+
+Las secciones `## SPEC-03`, `## SPEC-04` y `## SPEC-05` aún listan esos casos como `todo`; no se editan por ser
+de otras specs (esta tabla es la referencia vigente). PRY-T01 se actualizó en `## SPEC-00` a pedido del leader.
+
+### Casos en `test.todo`
+
+Ninguno. No queda ningún `test.todo` en `tests/` (`grep -rn "test.todo" tests` → 0).
+
+### Pruebas fallidas
+
+Ninguna.
+
+**Observación (no es fallo del código):** en RD-T08 e IDE-T07, nock no espera los 6 s reales: cuando la demora
+del interceptor supera el timeout del socket (`BILLETERA_TIMEOUT_MS` = 5000), nock emite el `timeout` de inmediato.
+Por eso esas pruebas comprueban el resultado (502 `BILLETERA_NO_DISPONIBLE`, depósito FALLIDO, reintento) y no el
+tiempo de pared. IDE-T04 (2 s < timeout) sí espera la demora real (≥ 1,9 s).
+
+### Cobertura (`src/core/` y `src/modules/`)
+
+```
+----------------------------|---------|----------|---------|---------|-------------------
+File                        | % Stmts | % Branch | % Funcs | % Lines | Uncovered Line #s
+----------------------------|---------|----------|---------|---------|-------------------
+All files                   |   99.59 |    94.53 |   98.91 |   99.77 |
+ core                       |   98.93 |    92.98 |   97.14 |   99.42 |
+ core/clients               |     100 |    92.85 |     100 |     100 |
+ core/middlewares           |     100 |    94.87 |     100 |     100 |
+ core/repositories          |     100 |     87.5 |     100 |     100 |
+ core/tareas                |     100 |      100 |     100 |     100 |
+ modules/registrar-deposito |     100 |      100 |     100 |     100 |
+  controller.js             |     100 |      100 |     100 |     100 |
+  index.js                  |     100 |      100 |     100 |     100 |
+  repository.js             |     100 |      100 |     100 |     100 |
+  routes.js                 |     100 |      100 |     100 |     100 |
+  schema.js                 |     100 |      100 |     100 |     100 |
+  service.js                |     100 |      100 |     100 |     100 |
+----------------------------|---------|----------|---------|---------|-------------------
+Test Suites: 14 passed, 14 total
+Tests:       234 passed, 234 total
+```
+
+- `src/modules/`: de **0 %** (sin pruebas; el umbral fallaba según `progress/impl_07.md`) a **100 %** en stmts,
+  branches, funcs y lines (≥ 80 %).
+- `src/core/`: 99,59 % stmts · 94,53 % branches (≥ 80 %).

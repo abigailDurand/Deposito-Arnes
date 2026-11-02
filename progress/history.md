@@ -118,3 +118,18 @@
     con `JWT_PUBLIC_KEY` y `BILLETERA_TOKEN`.
   - `tests/reporte.md` § SPEC-00 aún lista PRY-T01 como todo; actualizar al cerrar.
 - **Cierre:** feature 6 `done`. Próximo: SPEC-07 (registrar depósito).
+
+## 2026-11-02 — Feature 7: registrar-deposito (SPEC-07)
+- **Agentes:** leader → desarrolladorback → tester → revisor.
+- **Cambios:** `src/modules/registrar-deposito/` y sus pruebas (ver `progress/impl_07.md`).
+- **Verificación:** `bash init.sh` completo verde; 234 pruebas, 0 todo; cobertura global 99,6 %.
+  RD-T01..T12 reales; SEG-T06, AUD-T01/T02/T04, IDE-T02..T08/T10 convertidos a pruebas reales.
+- **Veredicto:** APROBADO CON OBSERVACIONES (`progress/review_07.md`).
+- **Pendiente de decisión humana (no bloqueante):**
+  - `"10.100"` → 422 `MONTO_INVALIDO` (decimales contados sobre el string). Confirmar interpretación de RD-R03.
+  - Riesgo operativo: si `acreditar` OK pero falla `PROCESANDO→COMPLETADO` (BD caída) → 500, la clave se
+    borra (IDE-R08) y un reintento acreditaría dos veces. Cumple RD-R06; análogo a IDE-R10. Documentar en la spec.
+- **Arrastrar:**
+  - tester: prueba `"10.100"` → 422 en `tests/unit/registrar-deposito/service.test.js`.
+  - tester: actualizar `tests/reporte.md` § SPEC-00/03/04/05 (todo ya convertidos).
+- **Cierre:** feature 7 `done`. Próximo: SPEC-08 (consultar depósito).

@@ -154,7 +154,7 @@
         "Con todas las extensiones inactivas, el depósito funciona igual",
         "RD-T01 a RD-T12 pasan; los test.todo de SEG, AUD e IDE que esperaban SPEC-07 pasan a pruebas reales"
       ],
-      "status": "pending"
+      "status": "done"
     },
     {
       "id": 8,
