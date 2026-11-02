@@ -23,5 +23,4 @@ _Si algo de una spec es ambiguo o falta: spec, sección, regla y la duda exacta.
 
 ## Próximo paso
 
-Sesión pausada por el humano tras cerrar SPEC-08. Siguiente: SPEC-09 (historial de depósitos).
-Antes, revisar los pendientes de decisión humana al final de `progress/history.md`.
+Todas las features en `done`. Revisar los pendientes de decisión humana al final de `progress/history.md`.

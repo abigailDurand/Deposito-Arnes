@@ -627,6 +627,10 @@ Tests:       234 passed, 234 total
   con `registrar-deposito` y `consultar-deposito` activos y `limites-por-canal`, `conversion-moneda`, `alerta-uif`
   inactivas. Depósitos insertados directo en `depositos` (SPEC-08 §6) con cuentas y usuarios de SPEC-02 §4.
   Billetera con los helpers de nock (`nock.disableNetConnect()`). `limpiar()` en `beforeEach`.
+- **Actualización 2026-11-02 (tester de SPEC-11):** CD-T07 y CD-T08 dejaron de ser `test.todo` y son pruebas
+  reales y verdes. Corrida vigente: `bash init.sh` completo → `EXIT=0`, `[OK] SPEC-08: todos sus casos tienen
+  prueba` · `Test Suites: 21 passed, 21 total` · `Tests: 340 passed, 340 total` (0 todo). El `manifest()` de la
+  suite acepta `conversion` (def. `inactivo`) para activar el módulo real `conversion-moneda`.
 - Para probar CD-R07 sin SPEC-11 se usa el transformador falso de `tests/core/fixtures/` (`fx-transformador-a`,
   con `leerExtension`), registrado con `registrarFixtures(jest)` como en SPEC-06.
 - `afterEach` espera a que el conteo de `auditoria_depositos` se estabilice: la auditoría escribe tras responder y
@@ -643,6 +647,8 @@ Tests:       234 passed, 234 total
 | CD-T04 `usr-cliente-2` consulta un depósito a `0011-0123-456789` → 404 `DEPOSITO_NO_ENCONTRADO` | idem |
 | CD-T05 `usr-agente-2` consulta un depósito de `usr-agente-1` → 404; billetera no llamada | idem |
 | CD-T06 `usr-agente-1` consulta su propio depósito → 200 cuerpo completo; billetera no llamada | idem |
+| CD-T07 depósito `100.00` USD → `0011-0123-456789` (PEN, `monto_acreditar` `375.00`) con su fila en `tipos_cambio` y en `conversiones_deposito`, conversion-moneda **activa** → 200 con el cuerpo completo y `extensiones: { "conversion-moneda": { monedaCuenta: "PEN", tipoCambio: "3.7500", montoAcreditado: "375.00" } }` | `tests/integration/consultar-deposito/consultar.test.js` |
+| CD-T08 el mismo depósito con conversion-moneda **inactiva** → 200 con `extensiones: {}`; la fila de `conversiones_deposito` sigue ahí | idem |
 | CD-T09 `usr-cliente-1` y billetera 500 → 502 `BILLETERA_NO_DISPONIBLE` | idem |
 
 Pruebas adicionales por regla (todas ✅):
@@ -681,12 +687,8 @@ Pruebas adicionales por regla (todas ✅):
 
 ### Casos en `test.todo`
 
-| Caso | Espera | Motivo |
-|---|---|---|
-| CD-T07 fila en `conversiones_deposito` con conversion-moneda activa → `extensiones.conversion-moneda` | SPEC-11 | No existen la tabla ni el módulo `conversion-moneda` |
-| CD-T08 mismo depósito con conversion-moneda inactiva → sin esa clave | SPEC-11 | idem |
-
-No había `test.todo` anteriores que esperaran SPEC-08.
+Ninguno (estado vigente, 2026-11-02). CD-T07 y CD-T08 esperaban SPEC-11 y se convirtieron en pruebas reales al
+probar SPEC-11 (ver `## SPEC-11`). No había `test.todo` anteriores que esperaran SPEC-08.
 
 ### Pruebas fallidas
 
@@ -719,3 +721,334 @@ Tests:       2 todo, 268 passed, 270 total
 - `src/modules/`: de **65,51 %** (`consultar-deposito` al 0 %, umbral en rojo según `progress/impl_08.md`) a **100 %**
   en stmts, branches, funcs y lines (≥ 80 %).
 - `src/core/`: 99,62 % stmts · 94,83 % branches (≥ 80 %).
+- Corrida vigente (SPEC-11): `modules/consultar-deposito` 100 % en las cuatro métricas; ver `## SPEC-11`.
+
+## SPEC-09
+
+- **Tester** · 2026-11-02 · Feature 9 (`historial-depositos`).
+- **Ejecución:** `bash init.sh` completo con PostgreSQL real (`deposito_test`) → **`EXIT=0`**.
+  `[OK] SPEC-09: todos sus casos tienen prueba` · alcance OK (147 archivos) ·
+  `Test Suites: 17 passed, 17 total` · `Tests: 2 todo, 299 passed, 301 total`.
+- Integración: `crearApp({ manifest })` dentro de cada prueba con manifest a medida
+  (`registrar-deposito`, `consultar-deposito` e `historial-depositos` activos; `limites-por-canal`,
+  `conversion-moneda`, `alerta-uif` inactivas). Depósitos insertados directo en `depositos`
+  (SPEC-09 §6) con cuentas y usuarios de SPEC-02 §4. Billetera con los helpers de nock
+  (`nock.disableNetConnect()`). `limpiar()` en `beforeEach`.
+- `creado_en` se inserta explícito en milisegundos (nota de `progress/impl_09.md` para HD-T05):
+  el valor de `desde`/`hasta` coincide exactamente con el guardado.
+- Arrastre de la revisión de SPEC-08 aplicado: `afterEach` espera a que el conteo de
+  `auditoria_depositos` se estabilice antes del `TRUNCATE` de `limpiar()` (mismo patrón que
+  `consultar.test.js`); todas las líneas del archivo ≤ 100 caracteres.
+
+### Casos cubiertos
+
+Todos en `tests/integration/historial-depositos/historial.test.js`.
+
+| Caso | Qué comprueba |
+|---|---|
+| HD-T01 | `usr-cliente-1`, 3 depósitos → 200 con el cuerpo exacto de §5 (`pagina 1`, `tamano 20`, `total 3`), orden del más reciente al más antiguo, ningún elemento con `extensiones`; billetera consultada 1 vez con el `X-Correlation-Id` |
+| HD-T02 | `usr-cliente-2` en su cuenta USD sin depósitos (hay depósitos en otra cuenta) → `{ datos: [], pagina: 1, tamano: 20, total: 0 }` |
+| HD-T03 | 25 depósitos, `pagina=2&tamano=20` → los 5 más antiguos en orden, `total 25` |
+| HD-T04 | `estado=FALLIDO` con 6 depósitos de los 4 estados → solo los 3 FALLIDOS, `total 3` |
+| HD-T05 | `desde` = `creado_en` exacto del 2º depósito → incluido (2 elementos, `total 2`) |
+| HD-T06 | `usr-cliente-2` pide `0011-0123-456789` → 403 `SIN_PERMISO` con el mensaje de §5; billetera consultada; `repository.listar` no llamado |
+| HD-T07 | `tamano=500`, `pagina=0`, `desde > hasta` → 400 `FORMATO_INVALIDO` cada uno; ni billetera ni `repository.listar` |
+| HD-T08 | `usr-agente-1` con depósitos suyos y de `usr-agente-2` → solo los 2 suyos, `total 2`; billetera sin peticiones |
+
+Pruebas adicionales por regla (todas ✅):
+
+- **Feature activa/inactiva:** `historial-depositos` `inactivo` → 404 `RUTA_NO_ENCONTRADA`, ni BD ni billetera.
+- **HD-R01:** números con un dígito de menos/más, con letra, `abc` → 400 sin billetera ni BD.
+- **HD-R02:** valores por defecto (`pagina 1`, `tamano 20`: 20 de 25); límites válidos `tamano=1`
+  y `tamano=100`; inválidos `tamano=0|101`, `pagina=-1|1.5|abc`, `estado=OTRO|fallido`,
+  `desde=ayer`, `hasta` con mes 13 → 400; `desde = hasta` es válido.
+- **HD-R03:** `hasta` igual al `creado_en` → incluido; rango `desde..hasta` inclusivo en ambos extremos.
+- **HD-R04:** `usr-cajero-1` solo ve los suyos de esa cuenta (no los de otra cuenta ni de otro
+  operador), sin billetera; operador sin depósitos propios → lista vacía.
+- **HD-R05:** cliente ve los de su cuenta registrados por cualquier operador; billetera 404 → 403;
+  billetera 500 y timeout → 502 `BILLETERA_NO_DISPONIBLE`; cuenta propia BLOQUEADA → 200 (HD-R05
+  solo exige titularidad).
+- **HD-R06:** empate en `creado_en` → `id DESC`; `LIMIT`/`OFFSET` como parámetros (`[7, 14]` con
+  `pagina=3&tamano=7`, sin interpolar en el SQL).
+- **HD-R07:** filtros combinados (estado + rango + operador + página) → `total` = 4 coherente con la
+  lista; página fuera de rango → `datos: []` con el total real; `repository.listar`/`contar` directos.
+- **HD-R08:** con una extensión falsa activa con datos (`fx-transformador-a`), la lista sigue sin
+  `extensiones` y `pipeline.leerExtensiones`/`leerExtension` no se llaman.
+- **§2 solo SELECT:** la tabla `depositos` no cambia tras listar.
+- **AUD-R06:** 200 → fila `LISTAR_DEPOSITOS` `EXITO` (`deposito_id` nulo); 403 → `ERROR_403`.
+- `index.js` cumple el contrato de endpoint de SPEC-06 §4.
+
+### Casos en `test.todo`
+
+Ninguno de SPEC-09. No había `test.todo` anteriores que esperaran SPEC-09 (siguen CD-T07/CD-T08,
+que esperan SPEC-11).
+
+### Pruebas fallidas
+
+Ninguna.
+
+### Cobertura (`src/core/` y `src/modules/`)
+
+```
+-----------------------------|---------|----------|---------|---------|-------------------
+File                         | % Stmts | % Branch | % Funcs | % Lines | Uncovered Line #s
+-----------------------------|---------|----------|---------|---------|-------------------
+All files                    |   99.51 |    94.89 |    99.1 |   99.82 |
+ core                        |   98.93 |    93.85 |   97.14 |   99.42 |
+ modules/consultar-deposito  |     100 |      100 |     100 |     100 |
+ modules/historial-depositos |   98.68 |     91.3 |     100 |     100 |
+  controller.js              |     100 |      100 |     100 |     100 |
+  index.js                   |     100 |      100 |     100 |     100 |
+  repository.js              |     100 |      100 |     100 |     100 |
+  routes.js                  |     100 |      100 |     100 |     100 |
+  schema.js                  |     100 |      100 |     100 |     100 |
+  service.js                 |   95.65 |       75 |     100 |     100 | 13,31
+ modules/registrar-deposito  |     100 |      100 |     100 |     100 |
+-----------------------------|---------|----------|---------|---------|-------------------
+Test Suites: 17 passed, 17 total
+Tests:       2 todo, 299 passed, 301 total
+```
+
+- Todo ≥ 80 %. Ramas sin cubrir en `service.js`: 13 (`roles` que no es arreglo) y 31 (operador
+  sin `id` → 403 defensivo). Son defensivas: los tokens de SPEC-02 §4 siempre traen `sub` y
+  `roles`, así que no se alcanzan por HTTP con los datos de prueba permitidos.
+
+## SPEC-10
+
+- **Tester** · 2026-11-02 · Feature 10 (`limites-por-canal`).
+- **Ejecución:** `bash init.sh` completo con PostgreSQL real (`deposito_test`) → **verde**.
+  `[OK] SPEC-10: todos sus casos tienen prueba` · alcance OK (154 archivos) ·
+  `Test Suites: 19 passed, 19 total` · `Tests: 2 todo, 316 passed, 318 total`.
+- **SQL nuevo:** `tests/setup/globalSetup.js` (proyecto `integration`) hace
+  `DROP SCHEMA public CASCADE` y aplica todos los `db/*.sql` en orden alfabético, así que
+  `db/10-limites-canal.sql` se aplica tras `05-idempotencia.sql`. Verificado por prueba: la tabla
+  tiene exactamente las 6 filas de ejemplo de §4. `limpiar()` no la vacía (`CONSERVAR` en
+  `tests/helpers/db.js`). Sin bloqueo de infraestructura.
+- Unitarias: `db` falso que responde al SELECT parametrizado con la tabla de ejemplo de §4;
+  `jest.mock` del repository que por defecto delega en la implementación real
+  (`jest.requireActual`) y en LC-T04 devuelve `null`.
+- Integración: `crearApp({ manifest })` por prueba (`registrar-deposito` activo, `limites-por-canal`
+  activo o inactivo según el caso, `conversion-moneda` y `alerta-uif` inactivas); `usr-agente-1`,
+  canal AGENTE, cuenta `0011-0123-456789`; billetera con los helpers de nock. `afterEach` espera a
+  que se estabilice `auditoria_depositos` antes del `TRUNCATE`. Líneas ≤ 100 caracteres.
+
+### Casos cubiertos
+
+| Caso | Archivo | Qué comprueba |
+|---|---|---|
+| LC-T01 | `tests/unit/limites-por-canal/limites.test.js` | AGENTE `1500.00` PEN → resuelve `undefined`; `buscarLimite(db,'AGENTE','PEN')`; sin `warn` |
+| LC-T02 | `tests/unit/limites-por-canal/limites.test.js` | AGENTE `2000.00` PEN (igual al límite) → no lanza |
+| LC-T03 | `tests/unit/limites-por-canal/limites.test.js` | AGENTE `2000.01` PEN → `ErrorApp` `LIMITE_CANAL_EXCEDIDO`, 422, mensaje de §5 |
+| LC-T04 | `tests/unit/limites-por-canal/limites.test.js` | `buscarLimite` (jest.mock) → `null` → no lanza; `logger.warn` 1 vez con `{ canal, moneda }`; no se consulta la BD |
+| LC-T05 | `tests/integration/limites-por-canal/limites.test.js` | Activa, POST `2500.00` PEN → 422 con cuerpo exacto de §5 y `correlationId`; 0 filas en `depositos`; 0 POST de acreditación |
+| LC-T06 | `tests/integration/limites-por-canal/limites.test.js` | Inactiva, POST `2500.00` PEN → 201 COMPLETADO; 1 fila; billetera acredita `2500.00` |
+
+Pruebas adicionales por regla (todas verdes): contrato SPEC-06 (`{ id, tipo, errores, ejecutar }`);
+LC-R01 (busca por `moneda` del depósito aunque `monedaAcreditar` difiera; cada canal con su límite);
+LC-R02 (AGENTE USD `500.00` pasa, `500.01` lanza; integración `2000.00` PEN activa → 201);
+LC-R04 (montos que como `Number` son iguales al límite y con `Decimal` lo superan → lanza; cambiar
+el límite en la tabla, en unitaria y con `UPDATE` en la BD real restaurado en `finally`, cambia el
+resultado); LC-R05 (no modifica `deposito`, devuelve `undefined`); `buscarLimite` → `Decimal` o
+`null`, SQL con `$1`/`$2` sin valores interpolados.
+
+**Interpretación de LC-T05 "billetera no llamada":** SPEC-07 §3/RD-R04 fija que `consultarCuenta`
+ocurre *antes* de `ejecutarValidadores`, así que el GET de consulta es obligatorio. Se interpreta
+como "billetera no recibe acreditación" (mismo criterio que SEG-T06 y RD-T05/T06 y el criterio de
+aceptación de SPEC-10): se afirma 0 POST `/creditos` y exactamente 1 GET de consulta. Si el humano
+entiende "ninguna llamada", contradiría RD-R04.
+
+### Casos en `test.todo`
+
+Ninguno de SPEC-10. No había `test.todo` previos que esperaran SPEC-10 (siguen CD-T07/CD-T08, esperan
+SPEC-11).
+
+### Pruebas fallidas
+
+Ninguna.
+
+### Cobertura
+
+| Ámbito | Stmts | Branch | Funcs | Lines |
+|---|---|---|---|---|
+| Total (`src/core/` + `src/modules/`) | 99.52 % | 94.98 % | 99.12 % | 99.82 % |
+| `src/core/` | 98.93 % | 93.85 % | 97.14 % | 99.42 % |
+| `src/modules/limites-por-canal/` | 100 % | 100 % | 100 % | 100 % |
+
+Umbral 80 % cumplido en `src/core/` y `src/modules/`.
+
+## SPEC-11
+
+- **Tester** · 2026-11-02 · Feature 11 (`conversion-moneda`).
+- **Ejecución:** `bash init.sh` completo, en primer plano, con PostgreSQL real (`deposito_test`) →
+  **`EXIT=0`**. `[OK] SPEC-11: todos sus casos tienen prueba` · alcance OK (162 archivos) ·
+  `Test Suites: 21 passed, 21 total` · `Tests: 340 passed, 340 total` (0 todo) ·
+  `[OK] Todas las pruebas en verde (unitarias + integración)`.
+- **SQL nuevo:** `tests/setup/globalSetup.js` (proyecto `integration`) hace
+  `DROP SCHEMA public CASCADE` y aplica todos los `db/*.sql` en orden alfabético, así que
+  `db/11-conversion-moneda.sql` se aplica tras `10-limites-canal.sql` (y `depositos` ya existe por
+  `00-core.sql`). Comprobado por prueba: existe `idx_tipos_cambio_par`, y todas las pruebas de
+  integración insertan en `tipos_cambio` / `conversiones_deposito`. Sin parches ni bloqueos.
+- `limpiar()` vacía `tipos_cambio` (y las 2 filas de ejemplo de §4): cada prueba carga sus propios
+  tipos con `vigente_desde = now() + <interval>` (`-1 day` ayer, `-1 minute` hoy, `1 day` mañana),
+  con los UUID de ejemplo de §4 (`…0001`, `…0002`) y `…0003`.
+- Integración: `crearApp({ manifest })` por prueba con `registrar-deposito` y `consultar-deposito`
+  activos, `limites-por-canal` y `alerta-uif` inactivas y `conversion-moneda` **activa** o
+  **inactiva** según el caso; `usr-cliente-1`, canal APP, cuenta `0011-0123-456789` (PEN) como pide
+  §6; billetera con los helpers de nock. `afterEach` espera a que se estabilice
+  `auditoria_depositos` antes del `TRUNCATE`. Líneas ≤ 100 caracteres en los archivos nuevos.
+- Unitarias: `db` / `tx` falsos (`{ query: jest.fn() }`); sin `jest.mock` de módulos.
+
+### Casos cubiertos
+
+| Caso | Archivo | Qué comprueba |
+|---|---|---|
+| CM-T01 | `tests/integration/conversion-moneda/conversion.test.js` | `100.00` USD, tipo 3.7500 → 201 COMPLETADO con `extensiones["conversion-moneda"] = { monedaCuenta: "PEN", tipoCambio: "3.7500", montoAcreditado: "375.00" }`; billetera recibe `monto "375.00"`, `moneda "PEN"`; `depositos`: `100.00` USD, `monto_acreditar 375.00` PEN; `conversiones_deposito`: 1 fila con `tipo_cambio_id`, `3.7500`, `monto_final 375.00` |
+| CM-T02 | idem | `150.00` PEN (con tipos USD→PEN y PEN→USD cargados) → 201, `extensiones: {}`, 0 filas de conversión, billetera recibe `150.00` PEN |
+| CM-T03 | idem | USD sin tipo cargado → 422 `MONEDA_NO_SOPORTADA`; 0 depósitos; 0 conversiones; sin acreditación |
+| CM-T04 | idem | Tipos de ayer (3.7000) y de hoy (3.7500) → usa 3.7500 (`tipo_cambio_id` = el de hoy), billetera recibe `375.00` |
+| CM-T05 | idem | Solo un tipo con `vigente_desde` mañana → 422 `MONEDA_NO_SOPORTADA`; nada guardado |
+| CM-T06 | `tests/unit/conversion-moneda/conversion.test.js` | `convertir("10.01","3.7555")` → `"37.59"`; `convertir("1.00","3.7550")` → `"3.76"` |
+| CM-T07 | `tests/integration/conversion-moneda/conversion.test.js` | Feature `inactivo` **con** tipo USD→PEN cargado (para que el 422 se deba a la inactividad) → 422 `MONEDA_NO_SOPORTADA`; nada guardado; sin acreditación |
+| CM-T08 | idem | Billetera 500 tras convertir → 502 `BILLETERA_NO_DISPONIBLE`; billetera recibió `375.00` PEN; depósito `FALLIDO`; la fila de `conversiones_deposito` sigue con `monto_final 375.00` |
+
+Pruebas adicionales por regla (todas ✅):
+
+- **CM-R01** (unit): misma moneda → devuelve el mismo objeto, no consulta la BD, `privado` intacto.
+- **CM-R02/R03** (unit): el SELECT recibe `['USD','PEN']` (origen = moneda del depósito) y filtra
+  `vigente_desde <= now()` ordenando `DESC`. (integración): PEN → cuenta USD `0011-0123-000002`
+  (`usr-cliente-2`) usa la fila PEN→USD 0.26 → `26.00` USD; con solo la fila PEN→USD, un depósito USD
+  a cuenta PEN → 422 (no invierte el sentido).
+- **CM-R04** (unit): acepta `Decimal`; `0.02 × 0.25 = 0.005` → `"0.01"` (HALF_UP); `0.01 × 0.26` →
+  `"0.00"`; `99999999.99 × 3.7555` → `"375549999.96"` (sin pérdida de precisión).
+- **CM-R05** (unit): `montoAcreditar` es `Decimal` `375.00`, `monedaAcreditar` PEN, `monto`/`moneda`
+  originales intactos, extensión de §5 y `contexto.privado.tipoCambioId`; PEN→USD 0.26 → `39.00`.
+- **CM-R06** (unit): sin tipo → devuelve el mismo objeto sin lanzar ni fijar `tipoCambioId`.
+- **CM-R07** (unit): `persistir` hace el INSERT con la `tx` recibida y los parámetros
+  `[depositoId, tipoCambioId, 'PEN', '3.7500', '375.00']` (no usa `contexto.db`); sin extensión → no
+  hace nada.
+- **CM-R08** (unit): `leerExtension` mapea la fila al bloque de §5 y `null` sin fila. (integración):
+  POST convertido y luego `GET /api/v1/depositos/{id}` → `extensiones["conversion-moneda"]` presente.
+- **CM-R10** (integración): `db/11-conversion-moneda.sql` crea `idx_tipos_cambio_par`.
+- `index.js` cumple el contrato de transformador de SPEC-06 §4.
+
+### Casos de otras specs desbloqueados
+
+- **CD-T07** y **CD-T08** (SPEC-08) en `tests/integration/consultar-deposito/consultar.test.js`:
+  pruebas reales y verdes (ver `## SPEC-08`).
+- Nota de `progress/impl_11.md` sobre pruebas que esperan 422 `MONEDA_NO_SOPORTADA`: RD-T10 usa un
+  manifest a medida con `conversion-moneda` inactiva, y además `limpiar()` vacía `tipos_cambio`;
+  sigue verde.
+
+### Casos en `test.todo`
+
+Ninguno.
+
+### Pruebas fallidas
+
+Ninguna.
+
+### Cobertura (`src/core/` y `src/modules/`)
+
+```
+-----------------------------|---------|----------|---------|---------|
+File                         | % Stmts | % Branch | % Funcs | % Lines |
+-----------------------------|---------|----------|---------|---------|
+All files                    |   99.54 |    95.15 |   99.17 |   99.83 |
+ core                        |   98.93 |    93.85 |   97.14 |   99.42 |
+ core/clients                |     100 |    92.85 |     100 |     100 |
+ core/middlewares            |     100 |    94.87 |     100 |     100 |
+ core/repositories           |     100 |     87.5 |     100 |     100 |
+ core/tareas                 |     100 |      100 |     100 |     100 |
+ modules/consultar-deposito  |     100 |      100 |     100 |     100 |
+ modules/conversion-moneda   |     100 |      100 |     100 |     100 |
+  index.js                   |     100 |      100 |     100 |     100 |
+  repository.js              |     100 |      100 |     100 |     100 |
+  service.js                 |     100 |      100 |     100 |     100 |
+ modules/historial-depositos |   98.68 |     91.3 |     100 |     100 |
+ modules/limites-por-canal   |     100 |      100 |     100 |     100 |
+ modules/registrar-deposito  |     100 |      100 |     100 |     100 |
+-----------------------------|---------|----------|---------|---------|
+```
+
+Umbral 80 % cumplido en `src/core/` y `src/modules/` (`conversion-moneda` 100 % en las cuatro
+métricas).
+
+## SPEC-12
+
+- **Tester** · 2026-11-02 · Feature 12 (`alerta-uif`).
+- **Ejecución:** `bash init.sh` completo, en primer plano, con PostgreSQL real (`deposito_test`) →
+  `Test Suites: 23 passed, 23 total` · `Tests: 355 passed, 355 total` (0 todo) ·
+  `[OK] Todas las pruebas en verde (unitarias + integración)` · `[OK] Entorno listo`.
+  `bash init.sh --rapido` ya no avisa de casos UIF sin prueba.
+- **SQL nuevo:** `tests/setup/globalSetup.js` (proyecto `integration`) hace
+  `DROP SCHEMA public CASCADE` y aplica todos los `db/*.sql` en orden alfabético, así que
+  `db/12-alerta-uif.sql` se aplica después de `00-core.sql` (FK a `depositos`). Comprobado por
+  prueba: UIF-T01 lee la fila de `alertas_uif` y UIF-T04 provoca una violación real de `CHAR(3)`.
+  `limpiar()` vacía `alertas_uif`. Sin parches.
+- Integración: `crearApp({ manifest })` por prueba con `registrar-deposito` y `consultar-deposito`
+  activos, `limites-por-canal` activa (VENTANILLA PEN 50000.00 no interfiere),
+  `conversion-moneda` **inactiva** y `alerta-uif` **activa** o **inactiva** según el caso;
+  `usr-cajero-1`, canal VENTANILLA, cuenta `0011-0123-456789` (PEN), umbrales de prueba de
+  `tests/setup/env.js` (`1000.00` PEN / `300.00` USD). Billetera con los helpers de nock.
+  `afterEach` espera a que se estabilice `auditoria_depositos` antes del `TRUNCATE`.
+  Líneas ≤ 100 caracteres.
+- Unitarias: `jest.mock('src/config')` con `uif: { umbralPEN: null, umbralUSD: '300.00' }`
+  (UIF-T07); `db` y `logger` falsos.
+
+### Casos cubiertos
+
+| Caso | Archivo | Qué comprueba |
+|---|---|---|
+| UIF-T01 | `tests/integration/alerta-uif/alerta.test.js` | `1000.00` PEN → 201 COMPLETADO; 1 fila en `alertas_uif`: `deposito_id` = id del depósito, `monto 1000.00`, `PEN`, `umbral 1000.00`, `PENDIENTE`, `id` UUID propio |
+| UIF-T02 | idem | `999.99` PEN → 201 COMPLETADO; 0 filas |
+| UIF-T03 | idem | Billetera 500, `5000.00` PEN → 502 `BILLETERA_NO_DISPONIBLE`; depósito `FALLIDO`; 0 filas |
+| UIF-T04 | idem | `repository.insertar` espiado reenvía al real con moneda `PENX` (error real de PostgreSQL) → 201 COMPLETADO normal, depósito COMPLETADO, 0 alertas; el logger del módulo (`logger.child({ modulo: 'alerta-uif' })`) recibe 1 `error` con `depositoId` |
+| UIF-T05 | idem | Depósito `5000.00` con alerta → `GET /depositos/{id}` 200 con exactamente las claves del depósito + `extensiones: {}`; ni el GET ni el 201 contienen `uif`/`umbral`/`PENDIENTE`/`estadoReporte` |
+| UIF-T06 | idem | Feature `inactivo`, `5000.00` PEN → 201 COMPLETADO; 0 filas |
+| UIF-T07 | `tests/unit/alerta-uif/alerta.test.js` | `config` simulado sin umbral PEN, `5000.00` PEN → sin INSERT (ni `db.query`); `logger.warn` con `depositoId` y `moneda: 'PEN'`; sin `error` |
+
+Pruebas adicionales por regla (todas verdes):
+
+- **UIF-R01** (integración): FALLIDO con billetera 500 y reintento exitoso con la misma clave → 1
+  alerta PENDIENTE.
+- **UIF-R02** (unit): `100.00` USD convertido a `375.00` PEN → sin alerta (usa el monto depositado).
+- **UIF-R03** (unit): `300.00` USD (igual al umbral) → INSERT con `'PENDIENTE'` y parámetros
+  `[uuid v4, depositoId, '300.00', 'USD', '300.00']`; `299.99` USD → sin INSERT.
+- **UIF-R05** (unit): contrato SPEC-06 (`id`, `tipo: 'post-proceso'`, sin `leerExtension`); el
+  depósito no se modifica.
+- **UIF-R06** (unit): `db.query` rechaza → `logger.error` con `depositoId`, `ejecutar` resuelve.
+- **UIF-R07** (integración): ninguna fila de `auditoria_depositos` menciona uif/umbral/estado_reporte.
+
+### Casos en `test.todo`
+
+Ninguno. No había `test.todo` de otras specs esperando SPEC-12.
+
+### Pruebas fallidas
+
+Ninguna.
+
+### Cobertura (`src/core/` y `src/modules/`)
+
+```
+-----------------------------|---------|----------|---------|---------|
+File                         | % Stmts | % Branch | % Funcs | % Lines |
+-----------------------------|---------|----------|---------|---------|
+All files                    |    99.7 |    95.01 |   99.19 |   99.83 |
+ core                        |   99.46 |    94.73 |   97.14 |   99.42 |
+ core/clients                |     100 |    92.85 |     100 |     100 |
+ core/middlewares            |     100 |    94.87 |     100 |     100 |
+ core/repositories           |     100 |     87.5 |     100 |     100 |
+ core/tareas                 |     100 |      100 |     100 |     100 |
+ modules/alerta-uif          |     100 |       80 |     100 |     100 |
+  index.js                   |     100 |       80 |     100 |     100 |
+  repository.js              |     100 |      100 |     100 |     100 |
+ modules/consultar-deposito  |     100 |      100 |     100 |     100 |
+ modules/conversion-moneda   |     100 |      100 |     100 |     100 |
+ modules/historial-depositos |   98.68 |     91.3 |     100 |     100 |
+ modules/limites-por-canal   |     100 |      100 |     100 |     100 |
+ modules/registrar-deposito  |     100 |      100 |     100 |     100 |
+-----------------------------|---------|----------|---------|---------|
+```
+
+Umbral 80 % cumplido. Ramas no cubiertas en `alerta-uif/index.js:41` (los `?.`/`??` defensivos
+para un error sin `message`/`code` y `config.uif` ausente): no son casos de la spec.

@@ -151,3 +151,76 @@
 1. Body > 100 kb → hoy 500 `ERROR_INTERNO` (DOM-R07). ¿400/413? (SPEC-06)
 2. `"10.100"` → 422 `MONTO_INVALIDO`. ¿Confirmar o aceptar ceros finales? (SPEC-07)
 3. Riesgo de doble acreditación si falla `PROCESANDO→COMPLETADO` tras acreditar. Documentar/cubrir en spec. (SPEC-07)
+
+### 2026-11-02 — Decisión humana
+- Pendiente 2 resuelto: **se aceptan los ceros finales** (`"10.100"` válido = 10.10; `"10.101"` inválido).
+  Requiere que el humano actualice RD-R03 en `specs-v2/07-registrar-deposito.md`; después,
+  desarrolladorback ajusta `src/modules/registrar-deposito/service.js` y tester cambia la prueba `"10.100"` → 422.
+- Pendiente 3 resuelto: **se acepta como riesgo conocido** la doble acreditación si falla
+  `PROCESANDO→COMPLETADO` tras acreditar (RD-R06 + IDE-R08), igual que IDE-R10. No se cambia código.
+  Opcional: que el humano lo documente en la spec junto a IDE-R10.
+- Pendiente 1 (body > 100 kb → 500) sigue abierto; sin cambio mientras no se decida.
+- Pendiente 2 **corregido por el humano**: NO se aceptan ceros finales. Solo hasta 2 decimales
+  (`"10.18"`, `"20.50"` válidos; `"10.100"` → 422 `MONTO_INVALIDO`). Es el comportamiento actual y
+  la lectura literal de RD-R03: no se cambia spec, código ni pruebas. Anula la decisión anterior.
+
+## 2026-11-02 — Feature 9: historial-depositos (SPEC-09)
+- **Agentes:** leader → desarrolladorback → tester → revisor.
+- **Inicio de sesión:** `init.sh` falló por contenedor `db` caído; `docker compose up -d db` lo resolvió.
+- **Cambios:** `src/modules/historial-depositos/` (6 archivos), `tests/integration/historial-depositos/historial.test.js`.
+- **Verificación:** `bash init.sh` completo verde; 299 pruebas + 2 todo (CD-T07/T08 hasta SPEC-11); cobertura módulo 98,68 % stmts.
+- **Veredicto:** APROBADO CON OBSERVACIONES (`progress/review_09.md`). Decisiones de impl_09 aceptadas.
+- **Arrastrar:**
+  - `service.js:31` 403 defensivo para operador sin `id` (no pedido por spec, rama sin cubrir).
+  - `service.js:12-15` `tieneRol` duplica `rolesDe` de `core/permisos.js` (no exportado; PRY-R05).
+- **Cierre:** feature 9 `done`. Próximo: SPEC-10 (límites por canal).
+
+## 2026-11-02 — Feature 10: limites-por-canal (SPEC-10)
+- **Agentes:** leader → desarrolladorback → tester → revisor.
+- **Cambios:** `db/10-limites-canal.sql`, `src/modules/limites-por-canal/{index,repository}.js`,
+  `tests/unit/limites-por-canal/`, `tests/integration/limites-por-canal/`. `src/core/` intacto.
+- **Verificación:** `bash init.sh` completo verde; 316 pruebas + 2 todo (CD-T07/T08 hasta SPEC-11).
+- **Veredicto:** APROBADO CON OBSERVACIONES (`progress/review_10.md`).
+- **Pendiente de decisión humana (no bloqueante):**
+  - LC-T05 "billetera no llamada" choca con RD-R04 (consulta GET antes de validadores). Implementado como
+    "sin acreditación" (0 POST, 1 GET). Aclarar redacción en la spec.
+  - `db/10-limites-canal.sql`: límites de EJEMPLO `[POR ACORDAR]` (PRY-R11); definir valores reales.
+- **Cierre:** feature 10 `done`. Próximo: SPEC-11 (conversión de moneda).
+
+## 2026-11-02 — Feature 11: conversion-moneda (SPEC-11)
+- **Agentes:** leader → desarrolladorback → tester → revisor.
+- **Cambios:** `db/11-conversion-moneda.sql`, `src/modules/conversion-moneda/{index,service,repository}.js`,
+  pruebas unitarias e integración de conversion-moneda; CD-T07/T08 convertidos a pruebas reales. `src/core/` intacto.
+- **Verificación:** `bash init.sh` completo verde; 340 pruebas, 0 todo.
+  Una ejecución del leader dio 1 fallo en idempotencia y fallos erráticos en otras suites por una ejecución
+  concurrente sobre la BD de pruebas (`globalSetup` hace `DROP SCHEMA`); repetida sin concurrencia → verde.
+- **Veredicto:** APROBADO CON OBSERVACIONES (`progress/review_11.md`).
+- **Pendiente de decisión humana (no bloqueante):**
+  - CM-R02: confirmar que "vigente" se mide con `now()` de PostgreSQL (reloj de la BD).
+  - CM-R03/R10: tipos de cambio de EJEMPLO `[POR ACORDAR]` en `db/11-conversion-moneda.sql`; definir fuente real
+    y si esas filas deben quedar en producción.
+- **Arrastrar:** `conversion-moneda/index.js:40` asume `deposito.extensiones` siempre presente (garantizado hoy por SPEC-07).
+- **Cierre:** feature 11 `done`. Próximo: SPEC-12 (alerta UIF).
+
+## 2026-11-02 — Feature 12: alerta-uif (SPEC-12)
+- **Agentes:** leader → desarrolladorback → tester → revisor.
+- **Cambios:** `db/12-alerta-uif.sql`, `src/modules/alerta-uif/{index,repository}.js`, pruebas unitarias e
+  integración de alerta-uif. `src/core/` intacto.
+- **Verificación:** `bash init.sh` completo verde (leader, final): 355 pruebas, 0 todo; alcance OK (170 archivos).
+- **Veredicto:** APROBADO CON OBSERVACIONES (`progress/review_12.md`).
+- **Pendiente de decisión humana (no bloqueante):**
+  - UIF-R04: qué hacer si `UIF_UMBRAL_*` no es numérico (hoy lanza y lo captura el pipeline). ¿Validar en `config.js`?
+- **Arrastrar:**
+  - Inestabilidad de la suite con ejecuciones concurrentes: `tests/setup/globalSetup.js` regenera
+    `tests/.tmp/*.pem` y hace `DROP SCHEMA`; dos jest a la vez → 401 / fallos erráticos. Valorar aislar
+    `tests/.tmp` y la BD por ejecución. Visto en SPEC-11 (leader) y SPEC-12 (revisor); sin concurrencia, verde.
+  - Subagentes dejaron tareas en segundo plano (python/node colgados); pedirles siempre primer plano.
+- **Cierre:** feature 12 `done`. **Todas las features (0–12) en `done`.**
+
+## Pendientes de decisión humana (acumulados al cierre del 2026-11-02)
+1. Body > 100 kb → hoy 500 `ERROR_INTERNO` (DOM-R07). ¿400/413? (SPEC-06)
+2. LC-T05 "billetera no llamada" vs RD-R04: aclarar redacción ("sin acreditación"). (SPEC-10)
+3. Valores reales de `[POR ACORDAR]`: límites por canal (SPEC-10) y tipos de cambio y su fuente (SPEC-11).
+4. CM-R02: confirmar "vigente" con `now()` de la BD. (SPEC-11)
+5. UIF-R04: validación de umbrales no numéricos. (SPEC-12)
+6. Commits de SPEC-09..12 pendientes (no se hicieron en esta sesión).

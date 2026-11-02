@@ -193,7 +193,7 @@
         "La paginación y los filtros devuelven siempre un total coherente con la lista",
         "HD-T01 a HD-T08 pasan"
       ],
-      "status": "pending"
+      "status": "done"
     },
     {
       "id": 10,
@@ -211,7 +211,7 @@
         "Desactivar la feature en el manifest la quita sin romper nada",
         "LC-T01 a LC-T06 pasan"
       ],
-      "status": "pending"
+      "status": "done"
     },
     {
       "id": 11,
@@ -229,7 +229,7 @@
         "Sin la feature, un depósito en otra moneda se rechaza con 422",
         "CM-T01 a CM-T08 pasan; CD-T07/T08 dejan de ser test.todo"
       ],
-      "status": "pending"
+      "status": "done"
     },
     {
       "id": 12,
@@ -246,7 +246,7 @@
         "La alerta nunca afecta al depósito ni la ve el cliente",
         "UIF-T01 a UIF-T07 pasan"
       ],
-      "status": "pending"
+      "status": "done"
     }
   ]
 }
