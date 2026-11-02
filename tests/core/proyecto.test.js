@@ -15,8 +15,18 @@ function envBase() {
 }
 
 describe('SPEC-00 · proyecto', () => {
-  // Requiere crearApp y la ruta /health de SPEC-06 (pending).
-  test.todo('PRY-T01 GET /health sin token → 200 { "estado": "ok" } (requiere SPEC-06)');
+  test('PRY-T01 GET /health sin token → 200 { "estado": "ok" }', async () => {
+    const request = require('supertest');
+    const { crearApp } = require('../../src/app');
+    // Manifest a medida: con el real, cargar() exige src/modules/* (SPEC-07..12 pending).
+    const app = crearApp({ manifest: { version: 1, servicio: 'deposito-service', features: [] } });
+
+    const res = await request(app).get('/health');
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ estado: 'ok' });
+    expect(res.headers['x-correlation-id']).toEqual(expect.any(String));
+  });
 
   test('PRY-T02 config.js sin DATABASE_URL → lanza error con el nombre de la variable', () => {
     const env = envBase();

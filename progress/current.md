@@ -23,4 +23,4 @@ _Si algo de una spec es ambiguo o falta: spec, sección, regla y la duda exacta.
 
 ## Próximo paso
 
-_Si la sesión se interrumpe, lo primero que debe hacer la siguiente sesión._
+Todas las features en `done`. Revisar los pendientes de decisión humana al final de `progress/history.md`.
