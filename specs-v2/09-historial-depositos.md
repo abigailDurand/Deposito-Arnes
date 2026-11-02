@@ -5,8 +5,8 @@
 **Objetivo:** Listar los depósitos de una cuenta, del más reciente al más antiguo, paginados y con filtros, según lo que cada rol puede ver.
 
 - **Id:** `historial-depositos` · **Tipo:** endpoint · **Ruta:** `GET /api/v1/cuentas/{numero}/depositos`
-- **Depende de:** SPEC-01 (`aJson`), 02 (billetera), 03 (`esTitular`), 04.
-- **Versión spec:** 1.1
+- **Depende de:** SPEC-01 (`aJson`), 02 v2.0 (billeteras PEN y USD), 03 (`esTitular`), 04.
+- **Versión spec:** 1.2
 
 **Stack:** Express 4.21, zod 3.23, pg 8.13. Pruebas: Jest 29 + Supertest 7 + nock 13.
 
@@ -43,7 +43,7 @@ sequenceDiagram
 
 ## 4. Reglas de Negocio
 
-- **HD-R01** · `numero` con formato `^\d{4}-\d{4}-\d{6}$`; si no → 400 `FORMATO_INVALIDO`.
+- **HD-R01** · `numero` con formato `^\d{4}-\d{4}-\d{6}$` (cuenta de la billetera PEN) o UUID en minúsculas `^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$` (billetera USD), igual que RD-R02; ninguno de los dos → 400 `FORMATO_INVALIDO`.
 - **HD-R02** · Query: `pagina` entero ≥ 1 (def. 1) · `tamano` entero de 1 a 100 (def. 20) · `estado` uno de los 4 estados (opcional) · `desde` y `hasta` fecha-hora ISO 8601 (opcionales). Fuera de rango, formato inválido o `desde` > `hasta` → 400 `FORMATO_INVALIDO`.
 - **HD-R03** · `desde` y `hasta` son inclusivos sobre `creado_en` (`>=` y `<=`).
 - **HD-R04** · Si el usuario tiene rol AGENTE o CAJERO → solo depósitos con `usuario_id` propio en esa cuenta; no se llama a billetera.
@@ -55,6 +55,8 @@ sequenceDiagram
 ## 5. El Contrato (API Contract)
 
 **Ruta:** `GET /api/v1/cuentas/{numero}/depositos?pagina=1&tamano=20&estado=COMPLETADO&desde=2026-10-01T00:00:00Z&hasta=2026-10-31T23:59:59Z`
+
+Billetera USD: `GET /api/v1/cuentas/11111111-1111-4111-8111-111111111111/depositos`.
 
 **Response HTTP 200**
 ```json
@@ -81,13 +83,18 @@ sequenceDiagram
    - Lista vacía → "Aún no hay depósitos en esta cuenta".
 3. **`tester`:** Crear los depósitos directo en la BD con los usuarios y cuentas de SPEC-02.
    - **HD-T01** · `usr-cliente-1`, 3 depósitos en `0011-0123-456789` → 200, 3 elementos, el más reciente primero, sin `extensiones`.
-   - **HD-T02** · Cuenta propia sin depósitos → `datos: []`, `total: 0`.
+   - **HD-T02** · Cuenta propia sin depósitos (`usr-cliente-2`, `22222222-2222-4222-8222-222222222222`) → `datos: []`, `total: 0`.
    - **HD-T03** · 25 depósitos, `pagina=2&tamano=20` → 5 elementos, `total: 25`.
    - **HD-T04** · `estado=FALLIDO` → solo FALLIDOS; `total` cuenta solo FALLIDOS.
    - **HD-T05** · `desde` igual al `creado_en` de un depósito → ese depósito se incluye.
    - **HD-T06** · `usr-cliente-2` pide `0011-0123-456789` → 403 `SIN_PERMISO`.
    - **HD-T07** · `tamano=500`, `pagina=0`, `desde` > `hasta` → 400 `FORMATO_INVALIDO`.
    - **HD-T08** · `usr-agente-1` con depósitos suyos y de `usr-agente-2` en la cuenta → solo los suyos; billetera no llamada.
+   - Billetera USD:
+   - **HD-T09** · `usr-cliente-1`, historial de `11111111-1111-4111-8111-111111111111` con 2 depósitos → 200, 2 elementos; se consultó Billetera USD y no la PEN.
+   - **HD-T10** · `usr-cliente-2` pide `11111111-1111-4111-8111-111111111111` → 403 `SIN_PERMISO`.
+   - **HD-T11** · `numero` UUID en mayúsculas o incompleto → 400 `FORMATO_INVALIDO`; billetera no llamada.
+   - **HD-T12** · Billetera USD 500 al verificar titular → 502 `BILLETERA_NO_DISPONIBLE`.
 4. **`revisor`:** Verificar HD-R06, HD-R07 y HD-R08.
 
 **Criterios de aceptación:**

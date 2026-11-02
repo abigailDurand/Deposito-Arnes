@@ -2,56 +2,49 @@
 
 ## SPEC-00
 
-- **Agente:** tester · **Fecha:** 2026-10-30 · **Feature:** 0 (`proyecto`)
-- **Ejecución:** `bash init.sh` completo → `EXIT=0`. PostgreSQL arriba (`docker compose ps`);
-  el proyecto `integration` aún no tiene pruebas (SPEC-00 no tiene casos de integración).
+- **Agente:** tester · **Fecha:** 2026-11-02 · **Feature:** 0 (`proyecto`) · **RETRABAJO** (`retrabajo: true`, integración Billetera USD; ver `progress/impl_00.md`)
+- **Ejecución:** `bash init.sh` completo (PostgreSQL arriba) → `Test Suites: 23 passed, 23 total` · `Tests: 357 passed, 357 total` · "Entorno listo".
+
+### Retrabajo: pruebas obsoletas actualizadas
+
+El desarrollador añadió `BILLETERA_USD_URL` (obligatoria) y `BILLETERA_USD_TOKEN` (opcional, INT-R02) en `src/config.js`.
+Por eso fallaban 5 pruebas de `tests/core/proyecto.test.js`: `envBase()` no tenía `BILLETERA_USD_URL`. Cambios en ese archivo (no se tocó `src/`):
+
+- `envBase()` incluye ahora `BILLETERA_USD_URL: 'http://billetera-usd.test'` (las 5 obligatorias de §5).
+- El `test.each` de obligatorias incluye `'BILLETERA_USD_URL'` (si falta → error con su nombre).
+- Prueba nueva: `BILLETERA_USD_TOKEN` opcional → si falta o está vacío, `config.billeteraUsd` = `{ url, token: null }`; si está presente, `token` toma su valor.
 
 ### Casos cubiertos
 
 | Caso | Archivo | Resultado |
 |---|---|---|
+| PRY-T01 (`GET /health` sin token → 200 `{ "estado": "ok" }`) | `tests/core/proyecto.test.js` | ✅ |
 | PRY-T02 (`cargarConfig` sin `DATABASE_URL` → error con `DATABASE_URL`) | `tests/core/proyecto.test.js` | ✅ |
-| PRY-T02 (`require('src/config')` sin `DATABASE_URL` en `process.env` → lanza, el servicio no arranca) | `tests/core/proyecto.test.js` | ✅ |
+| PRY-T02 (`require('src/config')` sin `DATABASE_URL` en `process.env` → lanza error y el servicio no arranca) | `tests/core/proyecto.test.js` | ✅ |
 | PRY-T03 (`enmascararCuenta('0011-0123-456789')` → `'****-****-456789'`) | `tests/core/proyecto.test.js` | ✅ |
-| PRY-T01 (`GET /health` sin token → 200 `{ "estado": "ok" }`) — convertido en prueba real con SPEC-06 (`crearApp`) | `tests/core/proyecto.test.js` | ✅ |
 
-Pruebas extra (sin id, justificadas en SPEC-00 §2/§5 y PRY-R06/R10), mismo archivo, todas ✅:
+Pruebas extra (sin id, basadas en SPEC-00 §2/§5 y PRY-R06/R10), en el mismo archivo y todas ✅:
 
-- Obligatorias `JWT_PUBLIC_KEY`, `BILLETERA_URL`, `BILLETERA_TOKEN` ausentes → error con su nombre; vacía = ausente.
-- Valores por defecto de §5 (`PORT` 3000, `LOG_LEVEL` info, `TRUST_PROXY` 1, `MANIFEST_PATH`, `JWT_*`, `IDEMPOTENCIA_DIAS` 7, `BILLETERA_TIMEOUT_MS` 5000) y sobrescritura explícita.
-- `UIF_UMBRAL_*` opcionales: ausentes → `null`; presentes → string (nunca `Number`).
-- `JWT_PUBLIC_KEY` con `\n` escritos → saltos de línea reales.
-- Entero inválido (`PORT=abc`) → error con el nombre de la variable.
-- `enmascararCuenta` sin guiones y con valor no string.
-- Logger: con pino real y las opciones reales de `src/core/logger.js` (solo se redirige el destino), `req.headers.authorization` sale `[REDACTED]` y el token no aparece en la salida.
+- Obligatorias `JWT_PUBLIC_KEY`, `BILLETERA_URL`, `BILLETERA_TOKEN`, `BILLETERA_USD_URL` ausentes → error con su nombre; vacía cuenta como ausente.
+- `BILLETERA_USD_TOKEN` opcional: ausente o vacío → `null`; presente → su valor (**nueva en el retrabajo**).
+- Valores por defecto de §5 y sobrescritura explícita (`config.billetera` mantiene su forma `{ url, token, timeoutMs }`).
+- `UIF_UMBRAL_*` opcionales: ausentes → `null`; presentes → string.
+- `JWT_PUBLIC_KEY` con `\n` escritos → saltos de línea reales; entero inválido (`PORT=abc`) → error con el nombre de la variable.
+- `enmascararCuenta` sin guiones y con un valor no string; el logger redacta `authorization`.
 
 ### Casos en `test.todo`
 
-Ninguno. PRY-T01 (esperaba SPEC-06) **ya no es `test.todo`**: se convirtió en prueba real al probar
-SPEC-06 (ver `## SPEC-06`) y sigue verde en la corrida de SPEC-07 (`bash init.sh` completo, 2026-11-02).
+Ninguno.
 
 ### Pruebas fallidas
 
-Ninguna.
+Ninguna (tras la actualización, las 5 pruebas obsoletas pasan).
 
 ### Cobertura (`src/core/` y `src/modules/`)
 
-```
------------|---------|----------|---------|---------|-------------------
-File       | % Stmts | % Branch | % Funcs | % Lines | Uncovered Line #s
------------|---------|----------|---------|---------|-------------------
-All files  |     100 |      100 |     100 |     100 |
- logger.js |     100 |      100 |     100 |     100 |
------------|---------|----------|---------|---------|-------------------
-Test Suites: 1 passed, 1 total
-Tests:       1 todo, 15 passed, 16 total
-```
-
-- `src/core/`: 100 % (solo existe `logger.js`). Umbral 80 % aplicado y cumplido.
-- `src/modules/`: sin código todavía (entra con SPEC-07).
-- La salida de arriba es la de la corrida original de SPEC-00 (`1 todo` = PRY-T01). **Estado vigente**
-  (corrida de SPEC-08, 2026-11-02): PRY-T01..T03 son pruebas reales y verdes; SPEC-00 no tiene `test.todo`.
-- `src/config.js` queda fuera de `collectCoverageFrom` (por diseño de `jest.config.js`), pero todas sus ramas las ejercitan las pruebas anteriores.
+Corrida completa del retrabajo: All files 99.7 % stmts / 95.01 % branch / 99.19 % funcs / 99.83 % lines;
+`core` 99.46 % stmts, todos los `modules/*` ≥ 98.68 % stmts. Supera el umbral del 80 %.
+`src/config.js` queda fuera de `collectCoverageFrom` (así lo define `jest.config.js`), pero las pruebas de arriba recorren sus ramas nuevas (`BILLETERA_USD_URL` obligatoria, token `null`/presente).
 
 ## SPEC-01
 

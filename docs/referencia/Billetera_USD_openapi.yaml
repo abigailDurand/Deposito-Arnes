@@ -1,0 +1,1262 @@
+openapi: 3.0.3
+
+info:
+  title: Billetera Digital USD API
+  version: 1.1.0
+  description: |
+    Contrato REST de **Billetera Digital USD**.
+    Permite crear depósitos, operar billeteras, transferir fondos y consultar tasas FX.
+
+    ### Convenciones
+    - Todos los montos se representan como **strings decimales** (`"150.50"`) — sin floats.
+    - Todas las billeteras operan exclusivamente en **USD**.
+    - Los endpoints idempotentes requieren **`Idempotency-Key`** como UUID v4.
+    - Toda respuesta incluye `X-Correlation-Id`; los errores usan siempre `ApiError`.
+    - `GET /health/ready` conserva su respuesta operacional `ReadyResponse` incluso cuando devuelve 503.
+    - Las conversiones USD/PEN son referenciales y usan una cotización externa de ExchangeRate-API.
+
+    ### Autenticación
+    Esta versión es una **demo sin autorización de API**. `/registro` y `/login` validan un PIN
+    de 4–6 dígitos para la experiencia de acceso, pero no emiten token ni protegen las demás rutas.
+  x-api-version: v1
+  x-currency: USD-only
+  x-fx-provider: https://www.exchangerate-api.com
+
+servers:
+  - url: /
+    description: Mismo host que sirve la documentación
+
+security: []
+
+tags:
+  - name: Depósitos USD
+    description: Registro de depósitos entrantes de efectivo, transferencia, tarjeta u otro.
+  - name: Billetera
+    description: Gestión de billeteras USD — saldo, depósitos, retiros y transferencias entre usuarios.
+  - name: Tipo de Cambio (FX)
+    description: Consulta de tasa USD/PEN vigente y conversión referencial.
+  - name: Health
+    description: Endpoints de salud para orquestadores y probes de Kubernetes.
+
+# ─────────────────────────────────────────────────────────────────────
+# PATHS
+# ─────────────────────────────────────────────────────────────────────
+paths:
+
+  # ── HEALTH ──────────────────────────────────────────────────────────
+  /health/live:
+    parameters:
+      - $ref: '#/components/parameters/CorrelationId'
+    get:
+      tags: [Health]
+      summary: Liveness probe — proceso vivo (RF-7)
+      operationId: healthLive
+      responses:
+        '200':
+          description: El proceso está vivo.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LiveResponse'
+              example:
+                status: alive
+
+  /health/ready:
+    parameters:
+      - $ref: '#/components/parameters/CorrelationId'
+    get:
+      tags: [Health]
+      summary: Readiness probe — listo para operar (RF-7)
+      operationId: healthReady
+      responses:
+        '200':
+          description: El servicio y la base de datos están operativos.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReadyResponse'
+              example:
+                status: ready
+                db: up
+                fakes: true
+        '503':
+          description: La base de datos no está disponible.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReadyResponse'
+              example:
+                status: not-ready
+                db: down
+                fakes: true
+
+  # ── DEPÓSITOS USD ───────────────────────────────────────────────────
+  /api/v1/depositos/usd:
+    parameters:
+      - $ref: '#/components/parameters/CorrelationId'
+    post:
+      tags: [Depósitos USD]
+      summary: Crear depósito USD (RF-1)
+      operationId: crearDeposito
+      description: |
+        Registra un depósito USD entrante. El proceso es **idempotente** —
+        reenviar la misma `Idempotency-Key` devuelve el depósito original con HTTP 200.
+        Si es nuevo, devuelve HTTP 201.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CrearDepositoRequest'
+            example:
+              cliente_id: cli_001
+              monto: "250.00"
+              moneda: USD
+              metodo_origen: TRANSFERENCIA
+              referencia_externa: REF-2026-001
+      responses:
+        '201':
+          description: Depósito creado exitosamente.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Deposito'
+        '200':
+          description: Replay — depósito ya existía (misma Idempotency-Key).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Deposito'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/IdempotencyConflict'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+    get:
+      tags: [Depósitos USD]
+      summary: Historial paginado de depósitos por cliente (RF-6)
+      operationId: historialDepositos
+      parameters:
+        - name: cliente_id
+          in: query
+          required: true
+          description: ID del cliente propietario de los depósitos.
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 100
+          example: cli_001
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Listado paginado de depósitos.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HistorialDepositos'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /api/v1/depositos/usd/{id}:
+    parameters:
+      - $ref: '#/components/parameters/CorrelationId'
+    get:
+      tags: [Depósitos USD]
+      summary: Consultar depósito por ID (RF-6)
+      operationId: consultarDeposito
+      parameters:
+        - $ref: '#/components/parameters/DepositoId'
+      responses:
+        '200':
+          description: Datos completos del depósito.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Deposito'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  # ── BILLETERA ────────────────────────────────────────────────────────
+  /api/v1/billetera/registro:
+    parameters:
+      - $ref: '#/components/parameters/CorrelationId'
+    post:
+      tags: [Billetera]
+      summary: Registro de usuario — alias + nombre + PIN (RF-13)
+      operationId: registroUsuario
+      description: |
+        Crea una billetera USD nueva para el alias indicado.  
+        El PIN (4–6 dígitos) se almacena como hash; nunca en claro.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegistroRequest'
+            example:
+              user_id: mariaperez
+              nombre: María Pérez
+              pin: "1234"
+      responses:
+        '201':
+          description: Billetera creada. Saldo inicial 0.00 USD.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Wallet'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /api/v1/billetera/login:
+    parameters:
+      - $ref: '#/components/parameters/CorrelationId'
+    post:
+      tags: [Billetera]
+      summary: Login de usuario — alias + PIN (RF-13)
+      operationId: loginUsuario
+      description: Verifica alias y PIN; devuelve los datos de la billetera.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+            example:
+              user_id: mariaperez
+              pin: "1234"
+      responses:
+        '200':
+          description: Autenticación exitosa.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Wallet'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/billetera/usuarios/buscar:
+    parameters:
+      - $ref: '#/components/parameters/CorrelationId'
+    get:
+      tags: [Billetera]
+      summary: Buscar usuarios por alias para transferencias (RF-13)
+      operationId: buscarUsuarios
+      description: |
+        Búsqueda parcial por `user_id` o `nombre` (ILIKE). Retorna hasta 8 resultados.
+        Mínimo 2 caracteres de búsqueda.
+      parameters:
+        - name: q
+          in: query
+          required: true
+          description: Texto a buscar (mín. 2 caracteres).
+          schema:
+            type: string
+            minLength: 2
+          example: maria
+      responses:
+        '200':
+          description: Resultados de la búsqueda.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BuscarUsuariosResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /api/v1/billetera/wallets:
+    parameters:
+      - $ref: '#/components/parameters/CorrelationId'
+    post:
+      tags: [Billetera]
+      summary: Crear billetera USD sin PIN (RF-9)
+      operationId: crearBilletera
+      description: |
+        Crea una billetera USD usando únicamente `user_id`.
+        Para el flujo demo con PIN, usar `/registro`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CrearWalletRequest'
+            example:
+              user_id: cli_demo_02
+              nombre: Cliente Demo
+      responses:
+        '201':
+          description: Billetera creada.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Wallet'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /api/v1/billetera/usuarios/{userId}/wallet:
+    parameters:
+      - $ref: '#/components/parameters/CorrelationId'
+    get:
+      tags: [Billetera]
+      summary: Obtener billetera por user_id / alias (RF-9)
+      operationId: billeteraPorUsuario
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          description: Alias del usuario (ej. `mariaperez`).
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 100
+          example: mariaperez
+      responses:
+        '200':
+          description: Datos de la billetera.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Wallet'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /api/v1/billetera/wallets/{id}:
+    parameters:
+      - $ref: '#/components/parameters/CorrelationId'
+    get:
+      tags: [Billetera]
+      summary: Obtener billetera por UUID (RF-9)
+      operationId: obtenerBilletera
+      parameters:
+        - $ref: '#/components/parameters/WalletId'
+      responses:
+        '200':
+          description: Datos de la billetera con saldo actual.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Wallet'
+              example:
+                id: 3fa85f64-5717-4562-b3fc-2c963f66afa6
+                user_id: mariaperez
+                nombre: María Pérez
+                balance: "350.75"
+                moneda: USD
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /api/v1/billetera/wallets/{id}/depositos:
+    parameters:
+      - $ref: '#/components/parameters/CorrelationId'
+    post:
+      tags: [Billetera]
+      summary: Depositar en billetera local (RF-10)
+      operationId: depositarBilletera
+      description: |
+        Acredita fondos USD en la billetera indicada.  
+        Operación atómica con `SELECT ... FOR UPDATE`.
+      parameters:
+        - $ref: '#/components/parameters/WalletId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MontoRequest'
+            example:
+              monto: "100.00"
+      responses:
+        '201':
+          description: Depósito acreditado.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OperacionResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/billetera/wallets/{id}/retiros:
+    parameters:
+      - $ref: '#/components/parameters/CorrelationId'
+    post:
+      tags: [Billetera]
+      summary: Retirar de billetera local (RF-10)
+      operationId: retirarBilletera
+      description: |
+        Debita fondos USD de la billetera.  
+        Devuelve 422 si el saldo es insuficiente.
+      parameters:
+        - $ref: '#/components/parameters/WalletId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MontoRequest'
+            example:
+              monto: "50.00"
+      responses:
+        '201':
+          description: Retiro procesado.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OperacionResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+
+  /api/v1/billetera/wallets/{id}/movimientos:
+    parameters:
+      - $ref: '#/components/parameters/CorrelationId'
+    get:
+      tags: [Billetera]
+      summary: Historial de movimientos paginado (RF-12)
+      operationId: movimientosBilletera
+      description: Devuelve el historial de movimientos USD de una billetera, ordenado por fecha descendente.
+      parameters:
+        - $ref: '#/components/parameters/WalletId'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Historial paginado de movimientos.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HistorialMovimientos'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /api/v1/billetera/transferencias:
+    parameters:
+      - $ref: '#/components/parameters/CorrelationId'
+    post:
+      tags: [Billetera]
+      summary: Transferir entre billeteras (atómica e idempotente) (RF-11)
+      operationId: transferirBilleteras
+      description: |
+        Transfiere USD de una billetera a otra de forma **atómica**.
+        - Acepta UUID o alias (`user_id`) en `origen_id` y `destino_id`.
+        - Es idempotente: reenviar la misma `Idempotency-Key` devuelve la transferencia original.
+        - Usa `SELECT ... FOR UPDATE` con bloqueo ordenado por UUID para prevenir deadlocks.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TransferenciaRequest'
+            example:
+              origen_id: mariaperez
+              destino_id: juancarlos
+              monto: "75.50"
+      responses:
+        '201':
+          description: Transferencia ejecutada exitosamente.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TransferenciaResult'
+        '200':
+          description: Replay — transferencia ya procesada (misma Idempotency-Key).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TransferenciaResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '409':
+          $ref: '#/components/responses/IdempotencyConflict'
+
+  # ── FX ───────────────────────────────────────────────────────────────
+  /api/v1/fx/tasa:
+    parameters:
+      - $ref: '#/components/parameters/CorrelationId'
+    get:
+      tags: [Tipo de Cambio (FX)]
+      summary: Tasa direccional USD/PEN o PEN/USD vigente (RF-8)
+      operationId: obtenerTasa
+      description: |
+        Retorna una tasa indicativa obtenida de ExchangeRate-API y cacheada en PostgreSQL.  
+        `USD_PEN` devuelve la tasa directa del proveedor; `PEN_USD` devuelve su recíproco
+        redondeado a seis decimales. La caché respeta la próxima actualización informada
+        por el proveedor (24 horas en su endpoint abierto). Si la fuente falla, se devuelve
+        la última cotización con `stale: true`; responde 503 únicamente si tampoco existe caché.
+      externalDocs:
+        description: Documentación del endpoint abierto de ExchangeRate-API
+        url: https://www.exchangerate-api.com/docs/free
+      parameters:
+        - name: par
+          in: query
+          required: false
+          description: Par direccional solicitado.
+          schema:
+            type: string
+            enum: [USD_PEN, PEN_USD]
+            default: USD_PEN
+      responses:
+        '200':
+          description: Tasa de cambio vigente.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TasaResponse'
+              example:
+                par: USD_PEN
+                tasa: "3.720000"
+                fuente: ExchangeRate-API
+                actualizada_en: "2026-11-02T00:02:31.000Z"
+                proxima_actualizacion_en: "2026-11-03T00:06:21.000Z"
+                stale: false
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /api/v1/fx/convertir:
+    parameters:
+      - $ref: '#/components/parameters/CorrelationId'
+    post:
+      tags: [Tipo de Cambio (FX)]
+      summary: Conversión referencial USD ↔ PEN (RF-8)
+      operationId: convertirDivisas
+      description: |
+        Calcula una conversión referencial informativa entre USD y PEN.  
+        **No acredita fondos** — el saldo de la billetera permanece siempre en USD.  
+        Casos soportados: USD→PEN, PEN→USD, USD→USD y PEN→PEN. Las conversiones
+        cruzadas usan la cotización externa vigente; las conversiones identidad usan tasa 1.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConvertirRequest'
+            example:
+              monto: "100.00"
+              de: USD
+              a: PEN
+      responses:
+        '200':
+          description: Resultado de la conversión.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConvertirResponse'
+              example:
+                monto_origen: "100.00"
+                moneda_origen: USD
+                monto_convertido: "372.00"
+                moneda_destino: PEN
+                tasa: "3.720000"
+                par: USD_PEN
+                fuente: ExchangeRate-API
+                actualizada_en: "2026-11-02T00:02:31.000Z"
+                stale: false
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+# ─────────────────────────────────────────────────────────────────────
+# COMPONENTS
+# ─────────────────────────────────────────────────────────────────────
+components:
+
+  # ── PARAMETERS ───────────────────────────────────────────────────────
+  parameters:
+    CorrelationId:
+      name: X-Correlation-Id
+      in: header
+      required: false
+      description: UUID de correlación opcional. Si falta o es inválido, la API genera uno nuevo.
+      schema:
+        type: string
+        format: uuid
+
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: UUID v4 único por intento de escritura. Permite reintentos seguros.
+      schema:
+        type: string
+        format: uuid
+        pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$'
+      example: 550e8400-e29b-41d4-a716-446655440000
+
+    DepositoId:
+      name: id
+      in: path
+      required: true
+      description: UUID del depósito.
+      schema:
+        type: string
+        format: uuid
+      example: 3fa85f64-5717-4562-b3fc-2c963f66afa6
+
+    WalletId:
+      name: id
+      in: path
+      required: true
+      description: UUID de la billetera.
+      schema:
+        type: string
+        format: uuid
+      example: 3fa85f64-5717-4562-b3fc-2c963f66afa6
+
+    Page:
+      name: page
+      in: query
+      required: false
+      description: Número de página (desde 1).
+      schema:
+        type: integer
+        minimum: 1
+        default: 1
+      example: 1
+
+    Limit:
+      name: limit
+      in: query
+      required: false
+      description: Registros por página (máx. 100).
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+      example: 20
+
+  # ── SCHEMAS ──────────────────────────────────────────────────────────
+  schemas:
+
+    # ── Requests ──
+    CrearDepositoRequest:
+      type: object
+      additionalProperties: false
+      required: [cliente_id, monto, metodo_origen]
+      properties:
+        cliente_id:
+          type: string
+          minLength: 1
+          maxLength: 100
+          description: Identificador del cliente que realiza el depósito.
+          example: cli_001
+        cuenta_destino_id:
+          type: string
+          minLength: 1
+          maxLength: 100
+          nullable: true
+          description: ID de cuenta destino (opcional).
+          example: cta_mx_01
+        monto:
+          $ref: '#/components/schemas/Monto'
+        moneda:
+          type: string
+          enum: [USD]
+          description: Solo se acepta USD. Si se omite, se asume USD.
+          example: USD
+        metodo_origen:
+          type: string
+          enum: [EFECTIVO, TRANSFERENCIA, TARJETA, OTRO]
+          description: Método por el que ingresa el efectivo.
+          example: TRANSFERENCIA
+        referencia_externa:
+          type: string
+          maxLength: 120
+          nullable: true
+          description: Número de referencia del banco o proveedor externo.
+          example: REF-2026-001
+
+    RegistroRequest:
+      type: object
+      additionalProperties: false
+      required: [user_id, nombre, pin]
+      properties:
+        user_id:
+          type: string
+          minLength: 3
+          maxLength: 30
+          pattern: '^[a-z0-9][a-z0-9_-]*$'
+          description: Alias único (minúsculas, números, guiones). Se normaliza a minúsculas.
+          example: mariaperez
+        nombre:
+          type: string
+          minLength: 2
+          maxLength: 60
+          description: Nombre completo del usuario.
+          example: María Pérez
+        pin:
+          type: string
+          pattern: '^\d{4,6}$'
+          description: PIN numérico de 4 a 6 dígitos. Se almacena como hash.
+          example: "1234"
+
+    LoginRequest:
+      type: object
+      additionalProperties: false
+      required: [user_id, pin]
+      properties:
+        user_id:
+          type: string
+          minLength: 3
+          maxLength: 30
+          pattern: '^[a-z0-9][a-z0-9_-]*$'
+          example: mariaperez
+        pin:
+          type: string
+          pattern: '^\d{4,6}$'
+          example: "1234"
+
+    CrearWalletRequest:
+      type: object
+      additionalProperties: false
+      required: [user_id]
+      properties:
+        user_id:
+          type: string
+          minLength: 1
+          maxLength: 100
+          description: Identificador del usuario dueño de la billetera.
+          example: cli_demo_02
+        nombre:
+          type: string
+          maxLength: 60
+          nullable: true
+          description: Nombre descriptivo (opcional).
+          example: Cliente Demo
+
+    MontoRequest:
+      type: object
+      additionalProperties: false
+      required: [monto]
+      properties:
+        monto:
+          $ref: '#/components/schemas/Monto'
+
+    TransferenciaRequest:
+      type: object
+      additionalProperties: false
+      required: [origen_id, destino_id, monto]
+      properties:
+        origen_id:
+          type: string
+          minLength: 1
+          maxLength: 100
+          description: UUID o alias de la billetera origen.
+          example: mariaperez
+        destino_id:
+          type: string
+          minLength: 1
+          maxLength: 100
+          description: UUID o alias de la billetera destino.
+          example: juancarlos
+        monto:
+          $ref: '#/components/schemas/Monto'
+
+    ConvertirRequest:
+      type: object
+      additionalProperties: false
+      required: [monto, de, a]
+      properties:
+        monto:
+          $ref: '#/components/schemas/Monto'
+        de:
+          type: string
+          enum: [USD, PEN]
+          description: Moneda de origen.
+          example: USD
+        a:
+          type: string
+          enum: [USD, PEN]
+          description: Moneda de destino.
+          example: PEN
+
+    # ── Responses ──
+    Deposito:
+      type: object
+      additionalProperties: false
+      required: [deposito_id, cliente_id, monto, moneda, estado, creado_en]
+      properties:
+        deposito_id:
+          type: string
+          format: uuid
+          example: 3fa85f64-5717-4562-b3fc-2c963f66afa6
+        cliente_id:
+          type: string
+          example: cli_001
+        cuenta_destino_id:
+          type: string
+          nullable: true
+          example: cta_mx_01
+        monto:
+          $ref: '#/components/schemas/Monto'
+        moneda:
+          type: string
+          enum: [USD]
+          example: USD
+        estado:
+          type: string
+          enum: [PENDIENTE, VALIDADO, COMPLETADO, FALLIDO]
+          example: COMPLETADO
+        movimiento_saldo_id:
+          type: string
+          nullable: true
+          example: mov_001
+        creado_en:
+          type: string
+          format: date-time
+          example: "2026-10-30T15:00:00.000Z"
+        completado_en:
+          type: string
+          format: date-time
+          nullable: true
+          example: "2026-10-30T15:00:05.000Z"
+
+    HistorialDepositos:
+      type: object
+      additionalProperties: false
+      required: [items, page, limit, total, correlation_id]
+      properties:
+        items:
+          type: array
+          items:
+            type: object
+            properties:
+              deposito_id:
+                type: string
+                format: uuid
+              monto:
+                $ref: '#/components/schemas/Monto'
+              moneda:
+                type: string
+                enum: [USD]
+              estado:
+                type: string
+                enum: [PENDIENTE, VALIDADO, COMPLETADO, FALLIDO]
+              creado_en:
+                type: string
+                format: date-time
+        page:
+          type: integer
+          example: 1
+        limit:
+          type: integer
+          example: 20
+        total:
+          type: integer
+          example: 45
+        correlation_id:
+          type: string
+          format: uuid
+
+    Wallet:
+      type: object
+      additionalProperties: false
+      required: [id, user_id, nombre, balance, moneda]
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: UUID de la billetera.
+          example: 3fa85f64-5717-4562-b3fc-2c963f66afa6
+        user_id:
+          type: string
+          description: Alias del usuario dueño.
+          example: mariaperez
+        nombre:
+          type: string
+          nullable: true
+          description: Nombre descriptivo del titular.
+          example: María Pérez
+        balance:
+          $ref: '#/components/schemas/Monto'
+        moneda:
+          type: string
+          enum: [USD]
+          example: USD
+
+    OperacionResult:
+      type: object
+      additionalProperties: false
+      required: [movimiento_id, balance, moneda]
+      description: Resultado de una operación de depósito o retiro en billetera.
+      properties:
+        movimiento_id:
+          type: string
+          format: uuid
+          description: UUID del movimiento registrado.
+          example: 9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d
+        balance:
+          $ref: '#/components/schemas/Monto'
+        moneda:
+          type: string
+          enum: [USD]
+          example: USD
+
+    TransferenciaResult:
+      type: object
+      additionalProperties: false
+      required: [referencia, origen_balance, destino_balance, moneda, replay]
+      properties:
+        referencia:
+          type: string
+          format: uuid
+          description: UUID único de la transferencia (compartido en ambos movimientos).
+          example: 9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d
+        origen_balance:
+          $ref: '#/components/schemas/Monto'
+        destino_balance:
+          $ref: '#/components/schemas/Monto'
+        moneda:
+          type: string
+          enum: [USD]
+          example: USD
+        replay:
+          type: boolean
+          description: true si la respuesta es un replay de una transferencia previa.
+          example: false
+
+    BuscarUsuariosResponse:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          maxItems: 8
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+                format: uuid
+                description: UUID de la billetera.
+              user_id:
+                type: string
+                description: Alias del usuario.
+              nombre:
+                type: string
+                nullable: true
+                description: Nombre completo del usuario.
+          example:
+            - id: 3fa85f64-5717-4562-b3fc-2c963f66afa6
+              user_id: mariaperez
+              nombre: María Pérez
+
+    HistorialMovimientos:
+      type: object
+      additionalProperties: false
+      required: [items, page, limit, total, moneda]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Movimiento'
+        page:
+          type: integer
+          example: 1
+        limit:
+          type: integer
+          example: 20
+        total:
+          type: integer
+          example: 12
+        moneda:
+          type: string
+          enum: [USD]
+          example: USD
+
+    Movimiento:
+      type: object
+      additionalProperties: false
+      required: [id, tipo, monto, moneda, saldo_resultante, referencia, creado_en]
+      properties:
+        id:
+          type: string
+          format: uuid
+        tipo:
+          type: string
+          enum: [deposito, retiro, transfer_in, transfer_out]
+          example: transfer_out
+        monto:
+          $ref: '#/components/schemas/Monto'
+        moneda:
+          type: string
+          enum: [USD]
+          example: USD
+        saldo_resultante:
+          $ref: '#/components/schemas/Monto'
+        referencia:
+          type: string
+          format: uuid
+          nullable: true
+          description: UUID de la transferencia relacionada (si aplica).
+        creado_en:
+          type: string
+          format: date-time
+          example: "2026-10-30T15:00:00.000Z"
+
+    TasaResponse:
+      type: object
+      additionalProperties: false
+      required: [par, tasa, fuente, actualizada_en, proxima_actualizacion_en, stale]
+      properties:
+        par:
+          type: string
+          enum: [USD_PEN, PEN_USD]
+          example: USD_PEN
+        tasa:
+          type: string
+          description: Tasa de cambio con 6 decimales.
+          example: "3.720000"
+        fuente:
+          type: string
+          description: Proveedor externo de la tasa.
+          example: ExchangeRate-API
+        actualizada_en:
+          type: string
+          format: date-time
+          description: Timestamp de actualización de la cotización informado por el proveedor.
+          example: "2026-11-02T00:02:31.000Z"
+        proxima_actualizacion_en:
+          type: string
+          format: date-time
+          nullable: true
+          description: Próxima actualización anunciada por el proveedor; null para caché histórica sin ese metadato.
+          example: "2026-11-03T00:06:21.000Z"
+        stale:
+          type: boolean
+          description: true cuando se devuelve una tasa vencida porque la fuente externa no respondió.
+          example: false
+
+    ConvertirResponse:
+      type: object
+      additionalProperties: false
+      required: [monto_origen, moneda_origen, monto_convertido, moneda_destino, tasa, par]
+      properties:
+        monto_origen:
+          $ref: '#/components/schemas/Monto'
+        moneda_origen:
+          type: string
+          enum: [USD, PEN]
+          example: USD
+        monto_convertido:
+          $ref: '#/components/schemas/Monto'
+        moneda_destino:
+          type: string
+          enum: [USD, PEN]
+          example: PEN
+        tasa:
+          type: string
+          description: Tasa direccional utilizada; para PEN→USD es el recíproco de USD→PEN.
+          example: "3.720000"
+        par:
+          type: string
+          enum: [USD_PEN, PEN_USD, USD_USD, PEN_PEN]
+          example: USD_PEN
+        fuente:
+          type: string
+          description: Proveedor externo; se omite en conversiones identidad.
+          example: ExchangeRate-API
+        actualizada_en:
+          type: string
+          format: date-time
+          description: Actualización de la cotización externa; se omite en conversiones identidad.
+        stale:
+          type: boolean
+          description: Indica si se usó la última cotización disponible por una falla del proveedor.
+
+    LiveResponse:
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [alive]
+          example: alive
+
+    ReadyResponse:
+      type: object
+      additionalProperties: false
+      required: [status, db, fakes]
+      properties:
+        status:
+          type: string
+          enum: [ready, not-ready]
+          example: ready
+        db:
+          type: string
+          enum: [up, down]
+          example: up
+        fakes:
+          type: boolean
+          description: true si el servicio usa adaptadores fake (sin MS externos reales).
+          example: true
+
+    # ── Primitives ──
+    Monto:
+      type: string
+      pattern: '^\d+(\.\d{1,2})?$'
+      description: Monto decimal como string. Sin floats. Máx. 9999999999.99.
+      example: "150.50"
+
+    # ── Errors ──
+    ApiError:
+      type: object
+      additionalProperties: false
+      required: [status, code, message, correlation_id, timestamp]
+      description: Formato estándar de error para todos los endpoints.
+      properties:
+        status:
+          type: integer
+          description: Código HTTP.
+          example: 400
+        code:
+          type: string
+          description: Código de error de negocio para manejo programático.
+          example: VALIDATION_ERROR
+        message:
+          type: string
+          description: Descripción legible del error.
+          example: Idempotency-Key obligatorio
+        correlation_id:
+          type: string
+          format: uuid
+          description: ID de correlación para trazabilidad. También en header `X-Correlation-Id`.
+          example: 7cd14140-2c6d-4fac-b522-76e66a51e2aa
+        timestamp:
+          type: string
+          format: date-time
+          example: "2026-10-30T20:00:00.000Z"
+
+  # ── RESPONSES ────────────────────────────────────────────────────────
+  responses:
+    BadRequest:
+      description: |
+        Petición inválida. Posibles códigos: `VALIDATION_ERROR`, `INVALID_AMOUNT`,
+        `SIN_IDEMPOTENCIA`, `MISMA_BILLETERA`, `MONTO_INVALIDO`.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          example:
+            status: 400
+            code: VALIDATION_ERROR
+            message: Idempotency-Key obligatorio
+            correlation_id: 550e8400-e29b-41d4-a716-446655440000
+            timestamp: "2026-10-30T15:00:00.000Z"
+    Unauthorized:
+      description: PIN incorrecto.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          example:
+            status: 401
+            code: PIN_INCORRECTO
+            message: PIN incorrecto
+            correlation_id: 550e8400-e29b-41d4-a716-446655440001
+            timestamp: "2026-10-30T15:00:00.000Z"
+
+    NotFound:
+      description: Recurso no encontrado. Código `NOT_FOUND` o `NO_ENCONTRADA`.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          example:
+            status: 404
+            code: NOT_FOUND
+            message: depósito no existe
+            correlation_id: 550e8400-e29b-41d4-a716-446655440002
+            timestamp: "2026-10-30T15:00:00.000Z"
+
+    Conflict:
+      description: Recurso ya existe. Código `YA_EXISTE`.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          example:
+            status: 409
+            code: YA_EXISTE
+            message: ese alias ya está registrado, inicia sesión
+            correlation_id: 550e8400-e29b-41d4-a716-446655440003
+            timestamp: "2026-10-30T15:00:00.000Z"
+
+    IdempotencyConflict:
+      description: La misma Idempotency-Key fue usada con un payload diferente.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          example:
+            status: 409
+            code: IDEMPOTENCY_CONFLICT
+            message: misma clave con datos diferentes
+            correlation_id: 550e8400-e29b-41d4-a716-446655440006
+            timestamp: "2026-10-30T15:00:00.000Z"
+
+    UnprocessableEntity:
+      description: Regla de negocio violada. Código `FONDOS_INSUFICIENTES`.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          example:
+            status: 422
+            code: FONDOS_INSUFICIENTES
+            message: fondos insuficientes
+            correlation_id: 550e8400-e29b-41d4-a716-446655440004
+            timestamp: "2026-10-30T15:00:00.000Z"
+
+    ServiceUnavailable:
+      description: Servicio externo no disponible (ej. tasa FX no cargada).
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          example:
+            status: 503
+            code: FX_NO_DISPONIBLE
+            message: tasa no disponible
+            correlation_id: 550e8400-e29b-41d4-a716-446655440005
+            timestamp: "2026-10-30T15:00:00.000Z"
+

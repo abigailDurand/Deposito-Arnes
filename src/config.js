@@ -1,7 +1,13 @@
 'use strict';
 
 // PRY-R09: único lugar del código que lee variables de entorno.
-const OBLIGATORIAS = ['DATABASE_URL', 'JWT_PUBLIC_KEY', 'BILLETERA_URL', 'BILLETERA_TOKEN'];
+const OBLIGATORIAS = [
+  'DATABASE_URL',
+  'JWT_PUBLIC_KEY',
+  'BILLETERA_URL',
+  'BILLETERA_TOKEN',
+  'BILLETERA_USD_URL',
+];
 
 function valor(env, nombre, defecto) {
   const v = env[nombre];
@@ -44,6 +50,12 @@ function cargarConfig(env) {
       url: valor(env, 'BILLETERA_URL'),
       token: valor(env, 'BILLETERA_TOKEN'),
       timeoutMs: entero(env, 'BILLETERA_TIMEOUT_MS', '5000'),
+    },
+    // Billetera USD (SPEC-02). Usa el mismo BILLETERA_TIMEOUT_MS (INT-R03).
+    // INT-R02: token opcional; ausente → null y no se envía Authorization.
+    billeteraUsd: {
+      url: valor(env, 'BILLETERA_USD_URL'),
+      token: valor(env, 'BILLETERA_USD_TOKEN', null),
     },
     // PRY-R06 / UIF-R04: los umbrales son dinero; se entregan como string para usarlos con Decimal.
     uif: {

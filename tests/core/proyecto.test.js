@@ -4,13 +4,14 @@ const { Writable } = require('node:stream');
 
 const { cargarConfig } = require('../../src/config');
 
-// Entorno mínimo válido (las 4 obligatorias de SPEC-00 §5); cada prueba parte de una copia.
+// Entorno mínimo válido (las 5 obligatorias de SPEC-00 §5); cada prueba parte de una copia.
 function envBase() {
   return {
     DATABASE_URL: 'postgres://deposito:deposito@localhost:5432/deposito_test',
     JWT_PUBLIC_KEY: '-----BEGIN PUBLIC KEY-----\\nABC\\n-----END PUBLIC KEY-----',
     BILLETERA_URL: 'http://billetera.test',
     BILLETERA_TOKEN: 'token-de-prueba',
+    BILLETERA_USD_URL: 'http://billetera-usd.test',
   };
 }
 
@@ -53,7 +54,7 @@ describe('SPEC-00 · proyecto', () => {
 });
 
 describe('SPEC-00 §5 · variables de entorno de config.js', () => {
-  test.each(['JWT_PUBLIC_KEY', 'BILLETERA_URL', 'BILLETERA_TOKEN'])(
+  test.each(['JWT_PUBLIC_KEY', 'BILLETERA_URL', 'BILLETERA_TOKEN', 'BILLETERA_USD_URL'])(
     'obligatoria %s ausente → error con su nombre',
     (nombre) => {
       const env = envBase();
@@ -83,6 +84,16 @@ describe('SPEC-00 §5 · variables de entorno de config.js', () => {
       timeoutMs: 5000,
     });
     expect(c.databaseUrl).toBe('postgres://deposito:deposito@localhost:5432/deposito_test');
+  });
+
+  test('BILLETERA_USD_TOKEN opcional: ausente o vacío → token null; presente → su valor (INT-R02)', () => {
+    expect(cargarConfig(envBase()).billeteraUsd).toEqual({
+      url: 'http://billetera-usd.test',
+      token: null,
+    });
+    expect(cargarConfig({ ...envBase(), BILLETERA_USD_TOKEN: '   ' }).billeteraUsd.token).toBeNull();
+    const c = cargarConfig({ ...envBase(), BILLETERA_USD_TOKEN: 'token-usd' });
+    expect(c.billeteraUsd).toEqual({ url: 'http://billetera-usd.test', token: 'token-usd' });
   });
 
   test('UIF_UMBRAL_* opcionales: ausentes → null; presentes → string (PRY-R06, nunca Number)', () => {

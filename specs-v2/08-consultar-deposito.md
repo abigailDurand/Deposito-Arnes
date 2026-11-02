@@ -5,8 +5,8 @@
 **Objetivo:** Devolver un depósito por su id, con su estado actual y los datos de las extensiones activas, solo a quien tiene permiso de verlo.
 
 - **Id:** `consultar-deposito` · **Tipo:** endpoint · **Ruta:** `GET /api/v1/depositos/{id}`
-- **Depende de:** SPEC-01 (`aJson`), 02 (billetera), 03 (`esTitular`), 04, 06 (`leerExtensiones`).
-- **Versión spec:** 1.1
+- **Depende de:** SPEC-01 (`aJson`), 02 v2.0 (billeteras PEN y USD), 03 (`esTitular`), 04, 06 (`leerExtensiones`).
+- **Versión spec:** 1.2
 
 **Stack:** Express 4.21, zod 3.23, pg 8.13. Pruebas: Jest 29 + Supertest 7 + nock 13.
 
@@ -77,7 +77,7 @@ sequenceDiagram
 
 1. **`desarrolladorback`:** Crear los archivos de §2.
 2. **`desarrolladorfront`:** Pantalla **Detalle del depósito** (se abre desde el comprobante o el historial).
-   - Mostrar id, cuenta enmascarada, monto, moneda, canal, referencia, estado y fechas.
+   - Mostrar id, cuenta enmascarada (billetera USD: solo los últimos 6 caracteres, p. ej. `…111111`), monto, moneda, canal, referencia, estado y fechas.
    - Estado con color: PENDIENTE y PROCESANDO "en curso", COMPLETADO "éxito", FALLIDO "error".
    - Si está PENDIENTE o PROCESANDO, botón "Actualizar".
    - Un bloque por cada clave de `extensiones`; si no viene, nada.
@@ -92,6 +92,11 @@ sequenceDiagram
    - **CD-T07** · Depósito con fila en `conversiones_deposito`, conversion-moneda activa → `extensiones.conversion-moneda` presente.
    - **CD-T08** · El mismo depósito con conversion-moneda inactiva → `extensiones` sin esa clave.
    - **CD-T09** · `usr-cliente-1` y billetera 500 → 502 `BILLETERA_NO_DISPONIBLE`.
+   - Billetera USD:
+   - **CD-T10** · `usr-cliente-1` consulta un depósito a `11111111-1111-4111-8111-111111111111` → 200; se llamó a `GET /api/v1/billetera/wallets/{id}` y no a la billetera PEN.
+   - **CD-T11** · `usr-cliente-2` consulta un depósito a `11111111-1111-4111-8111-111111111111` (titular `usr-cliente-1`) → 404 `DEPOSITO_NO_ENCONTRADO`.
+   - **CD-T12** · Billetera USD 404 al verificar titular → 404 `DEPOSITO_NO_ENCONTRADO` (CD-R04).
+   - **CD-T13** · Billetera USD 500 al verificar titular → 502 `BILLETERA_NO_DISPONIBLE`.
 4. **`revisor`:** Verificar CD-R05, CD-R07 y que el repository solo hace SELECT.
 
 **Criterios de aceptación:**

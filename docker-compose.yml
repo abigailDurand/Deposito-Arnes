@@ -30,6 +30,8 @@ services:
       DATABASE_URL: postgres://deposito:deposito@db:5432/deposito
       BILLETERA_URL: http://billetera-mock:4000
       BILLETERA_TOKEN: ${BILLETERA_TOKEN:-}
+      BILLETERA_USD_URL: http://billetera-mock:4000
+      BILLETERA_USD_TOKEN: ${BILLETERA_USD_TOKEN:-}
       JWT_PUBLIC_KEY: ${JWT_PUBLIC_KEY:-}
       UIF_UMBRAL_PEN: ${UIF_UMBRAL_PEN:-}
       UIF_UMBRAL_USD: ${UIF_UMBRAL_USD:-}

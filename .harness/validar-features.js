@@ -20,11 +20,22 @@ try {
 const validos = new Set(data.rules.valid_status);
 const porId = new Map(data.features.map((f) => [f.id, f]));
 
+// `reabierta`: feature que estuvo done y cuya spec cambió; su código existe y espera retrabajo.
+// Mientras se retrabaja (`retrabajo: true`, de reabierta → in_progress → done), sus dependientes
+// done siguen siendo válidos. Una feature in_progress exige dependencias done (orden estricto).
+function satisfecha(id, estricta) {
+  const d = porId.get(id);
+  if (!d) return false;
+  if (d.status === 'done') return true;
+  if (estricta) return false;
+  return d.status === 'reabierta' || (d.status === 'in_progress' && d.retrabajo === true);
+}
+
 for (const f of data.features) {
   if (!validos.has(f.status)) error(`Estado inválido en feature ${f.id}: ${f.status}`);
   if (!fs.existsSync(path.join(RAIZ, f.spec))) error(`Feature ${f.id}: no existe ${f.spec}`);
-  if (f.status === 'in_progress' || f.status === 'done') {
-    const faltan = f.depende_de.filter((d) => porId.get(d)?.status !== 'done');
+  if (['in_progress', 'done', 'reabierta'].includes(f.status)) {
+    const faltan = f.depende_de.filter((d) => !satisfecha(d, f.status === 'in_progress'));
     if (faltan.length) error(`Feature ${f.id} está ${f.status} pero sus dependencias ${faltan.join(', ')} no están done`);
   }
 }
@@ -52,7 +63,7 @@ function estadoCaso(id) {
 }
 
 const todasDone = data.features.every((f) => f.status === 'done');
-for (const f of data.features.filter((x) => x.status === 'done' || x.status === 'in_progress')) {
+for (const f of data.features.filter((x) => ['done', 'in_progress', 'reabierta'].includes(x.status))) {
   const faltan = [];
   const todos = [];
   const erroresAntes = errores;
@@ -70,7 +81,7 @@ for (const f of data.features.filter((x) => x.status === 'done' || x.status === 
     }
   }
   if (faltan.length && f.status === 'done') error(`SPEC-${String(f.id).padStart(2, '0')} done sin prueba para: ${faltan.join(', ')}`);
-  else if (faltan.length) warn(`SPEC-${String(f.id).padStart(2, '0')} (en curso) aún sin prueba: ${faltan.join(', ')}`);
+  else if (faltan.length) warn(`SPEC-${String(f.id).padStart(2, '0')} (${f.status === 'reabierta' ? 'reabierta' : 'en curso'}) aún sin prueba: ${faltan.join(', ')}`);
   else if (errores === erroresAntes) ok(`SPEC-${String(f.id).padStart(2, '0')}: todos sus casos tienen prueba${todos.length ? ` (todo: ${todos.join(', ')})` : ''}`);
 }
 

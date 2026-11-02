@@ -21,6 +21,9 @@ process.env.JWT_AUDIENCE = 'banco-api';
 process.env.BILLETERA_URL = 'http://billetera.test';
 process.env.BILLETERA_TOKEN = 'token-de-prueba';
 process.env.BILLETERA_TIMEOUT_MS = '5000';
+// Billetera USD (SPEC-02), también simulada con nock. Sin BILLETERA_USD_TOKEN (INT-R02: opcional).
+process.env.BILLETERA_USD_URL = 'http://billetera-usd.test';
+delete process.env.BILLETERA_USD_TOKEN;
 
 process.env.IDEMPOTENCIA_DIAS = '7';
 process.env.LOG_LEVEL = 'silent';
