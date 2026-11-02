@@ -100,3 +100,21 @@
   - SPEC-07: asignar `res.locals.depositoId` solo cuando la fila del depósito exista.
   - SPEC-07: convertir IDE-T02..T08 e IDE-T10 en pruebas reales con nock; AUD-T04 sigue en todo.
 - **Cierre:** feature 5 `done`. Próximo: SPEC-06 (pipeline y cargador).
+
+## 2026-11-02 — Feature 6: pipeline-y-cargador (SPEC-06)
+- **Agentes:** leader → desarrolladorback → tester → revisor.
+- **Cambios:** `src/app.js`, `src/server.js`, `src/core/pipeline.js`, `src/core/cargador.js`,
+  `tests/core/pipeline.test.js`, `tests/core/cargador.test.js`, `tests/core/fixtures/`,
+  `tests/integration/pipeline-y-cargador/`, `tests/core/proyecto.test.js` (PRY-T01 real).
+- **Verificación:** `bash init.sh` completo verde; 177 pruebas + 12 todo; cobertura global 99,49 %.
+  PIP-T01..T10 reales; PRY-T01 deja de ser todo; `req.ip` con `X-Forwarded-For` probado.
+- **Veredicto:** APROBADO CON OBSERVACIONES (`progress/review_06.md`).
+- **Pendiente de decisión humana (no bloqueante):** body > 100 kb responde 500 `ERROR_INTERNO`
+  (DOM-R07 literal); ¿agregar a la spec un 400/413? No se toca sin cambio de spec.
+- **Arrastrar:**
+  - SPEC-07: pasar el MISMO objeto `contexto` a `ejecutarTransformadores` y `persistirTransformadores` (PIP-R07).
+  - SPEC-07..12: el pipeline es singleton de proceso; cada prueba arma su app con su manifest dentro del test.
+  - SPEC-12 (cierre): repetir `docker compose up --build` con `specs-v2/manifest.yaml`; requiere `.env`
+    con `JWT_PUBLIC_KEY` y `BILLETERA_TOKEN`.
+  - `tests/reporte.md` § SPEC-00 aún lista PRY-T01 como todo; actualizar al cerrar.
+- **Cierre:** feature 6 `done`. Próximo: SPEC-07 (registrar depósito).

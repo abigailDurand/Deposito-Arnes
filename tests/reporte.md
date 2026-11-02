@@ -391,3 +391,94 @@ Tests:       13 todo, 129 passed, 142 total
 
 - `src/core/`: de ~67 % a 99,64 % stmts · 94,38 % branches (≥ 80 %). `src/modules/` aún sin código.
 - Rama no cubierta de `idempotenciaRepository.js:41`: `respuesta ?? null` / `depositoId ?? null` en `terminar` cuando llegan `undefined` (el middleware ya pasa `null`).
+
+## SPEC-06
+
+- **Tester** · 2026-11-02 · `bash init.sh` completo con PostgreSQL real: **verde** (12 suites, 177 passed + 12 todo).
+- **Módulos falsos:** `tests/core/fixtures/` (validadores, transformadores, post-procesos, endpoint, módulo de tipo
+  equivocado y estado compartido `registro.js`). `fixtures/modulos.js` los registra con
+  `jest.doMock(src/modules/<id>, ..., { virtual: true })`, que es la ruta que `cargar` pasa a `require`.
+  Ninguna prueba usa las features reales; los manifests son objetos.
+
+### Casos cubiertos
+
+| Caso | Archivo |
+|---|---|
+| PIP-T01 manifest sin extensiones → los 4 huecos no hacen nada (también `features: []`) | `tests/core/pipeline.test.js` |
+| PIP-T02 validadores orden 20 y 10 → corre primero el 10 | `tests/core/pipeline.test.js` |
+| PIP-T03 validador lanza → el siguiente no corre; el `ErrorApp` llega intacto (mismo código, status, mensaje) | `tests/core/pipeline.test.js` |
+| PIP-T04 dos transformadores → el segundo recibe el objeto devuelto por el primero | `tests/core/pipeline.test.js` |
+| PIP-T05 post-proceso lanza → no se propaga; `logger.error` (logger.child `{ correlationId, modulo }`) con `depositoId`; el siguiente corre | `tests/core/pipeline.test.js` |
+| PIP-T06 `leerExtensiones` con `null` → la clave no aparece | `tests/core/pipeline.test.js` |
+| PIP-T07 feature activa inexistente → `cargar` lanza; `crearApp` también (la app no arranca) | `tests/core/cargador.test.js` |
+| PIP-T08 tipo distinto al del manifest → `cargar` lanza; el pipeline anterior no queda a medias | `tests/core/cargador.test.js` |
+| PIP-T09 feature `inactivo` → la fábrica del módulo no se ejecuta (y control: la misma activa sí) | `tests/core/cargador.test.js` |
+| PIP-T10 ruta inexistente con token → 404 `RUTA_NO_ENCONTRADA` con el cuerpo exacto de §5 | `tests/core/cargador.test.js` |
+| PRY-T01 (SPEC-00) `GET /health` sin token → 200 `{ "estado": "ok" }` — **deja de ser `test.todo`** | `tests/core/proyecto.test.js` |
+
+Pruebas adicionales por regla:
+
+- PIP-R02: transformador lanza → `ErrorApp('ERROR_INTERNO')` 500, el siguiente no corre, `logger.error` con
+  `{ depositoId, error, codigoError }` (sin el objeto de error completo).
+- PIP-R03: `persistir` recibe el mismo `deposito` y `tx`, solo en transformadores que lo tienen; si lanza se propaga.
+- PIP-R07: `privado` distinto por id e idéntico entre `ejecutar` y `persistir`; el contexto del service no se
+  modifica; el módulo recibe `usuario`, `cuenta`, `correlationId`, `db` y `logger.child({ correlationId, modulo })`.
+- PIP-R08: a igual `orden`, gana la posición del manifest; `cargar` devuelve los routers de endpoints activos.
+- PIP-R10: errores del módulo registrados en el catálogo; `cargar` dos veces con el mismo módulo no lanza.
+- Contrato §4: validador con error ≠ 422, manifest sin `features`, feature sin id, tipo desconocido, extensión
+  sin `orden`, id repetido, id `../core`, id exportado distinto, endpoint sin `router`, extensión sin `ejecutar`
+  → `cargar` lanza; un `MODULE_NOT_FOUND` interno del módulo se relanza tal cual.
+- PIP-R11 (unit): sin token → 401 antes del 404; router montado en `/api/v1` con `req.usuario`; el mismo endpoint
+  inactivo → 404; `express.json` montado (body parseado; JSON roto → 400 `FORMATO_INVALIDO`); `trust proxy` =
+  `config.trustProxy`.
+- PIP-R12: `crearApp` no llama a `limpiarClaves.iniciar()`.
+
+### `test.todo` anteriores revisados (arrastres para SPEC-06)
+
+- **PRY-T01** → convertido en prueba real (arriba). La sección `## SPEC-00` de este reporte aún lo lista como
+  `todo`; no se edita por ser de otra spec.
+- **SPEC-04 → SPEC-06: `req.ip` con `X-Forwarded-For` y `trust proxy`; orden PIP-R11** → nuevas pruebas de
+  integración con PostgreSQL real en `tests/integration/pipeline-y-cargador/app.test.js`, sobre `crearApp`:
+  - `TRUST_PROXY=1` y `X-Forwarded-For: 198.51.100.1, 203.0.113.7` → fila de auditoría con `ip = 203.0.113.7`
+    (último salto), `ERROR_401`, `correlation_id` de la petición.
+  - Sin `X-Forwarded-For` → `ip` de la conexión (loopback).
+  - Con token y sin endpoints → 404 y fila con `usuario_id`, `canal`, `monto` (auditoria antes de autenticar y
+    `express.json` antes del 404).
+  - `GET /health` y rutas no auditadas → 0 filas.
+- **SPEC-03 → SPEC-06: `correlationId` primero y `autenticar` después de `/health`** → cubierto por PRY-T01
+  (con `X-Correlation-Id`), PIP-T10 y la prueba de 401 antes del 404.
+- Siguen en `todo` (esperan SPEC-07): SEG-T06; AUD-T01, AUD-T02, AUD-T04; IDE-T02..T08, IDE-T10.
+
+### Casos en `test.todo`
+
+Ninguno de SPEC-06.
+
+### Pruebas fallidas
+
+Ninguna.
+
+**Observación (no es caso de la spec, no hay prueba roja):** un body de más de 100 kb (`express.json` con
+`limit: '100kb'`) responde **500 `ERROR_INTERNO`**: `src/core/middlewares/manejadorErrores.js:24-30` solo traduce
+`entity.parse.failed`; el `entity.too.large` de body-parser cae en el error no controlado. SPEC-01/06 no definen
+qué código usar (413 no está en el catálogo), así que la prueba solo exige que el body no llegue al router
+(status ≥ 400). Decisión para el humano/leader.
+
+### Cobertura (`src/core/` y `src/modules/`)
+
+```
+----------------------------|---------|----------|---------|---------|-------------------
+File                        | % Stmts | % Branch | % Funcs | % Lines | Uncovered Line #s
+----------------------------|---------|----------|---------|---------|-------------------
+All files                   |   99.49 |    93.72 |   98.76 |   99.72 |
+ core                       |   98.93 |    92.98 |   97.14 |   99.42 |
+  cargador.js               |     100 |      100 |     100 |     100 |
+  pipeline.js               |   98.18 |    78.57 |     100 |     100 | 54-80,106-120
+----------------------------|---------|----------|---------|---------|-------------------
+Test Suites: 12 passed, 12 total
+Tests:       12 todo, 177 passed, 189 total
+```
+
+- `src/core/`: de 71,13 % stmts / 65,88 % branches (sin pruebas de SPEC-06) a **99,49 % stmts · 93,72 % branches**
+  (≥ 80 %). `cargador.js` 100 %; `pipeline.js` 98 % stmts / 100 % líneas. `src/modules/` aún sin código.
+- Ramas no cubiertas de `pipeline.js`: los `?? null` defensivos (`correlationId`, `actual?.id`, `deposito?.id`,
+  `err?.message`) y el `catch` de `ejecutarPostProcesos` cuando falla el propio `contextoDe` (línea 106).

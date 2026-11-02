@@ -131,7 +131,7 @@
         "Las pruebas pueden armar la app con cualquier combinación de features",
         "PIP-T01 a PIP-T10 pasan; PRY-T01 deja de ser test.todo"
       ],
-      "status": "pending"
+      "status": "done"
     },
     {
       "id": 7,
