@@ -133,3 +133,21 @@
   - tester: prueba `"10.100"` → 422 en `tests/unit/registrar-deposito/service.test.js`.
   - tester: actualizar `tests/reporte.md` § SPEC-00/03/04/05 (todo ya convertidos).
 - **Cierre:** feature 7 `done`. Próximo: SPEC-08 (consultar depósito).
+
+## 2026-11-02 — Feature 8: consultar-deposito (SPEC-08)
+- **Agentes:** leader → desarrolladorback → tester → revisor.
+- **Cambios:** `src/modules/consultar-deposito/`, `tests/unit/consultar-deposito/`,
+  `tests/integration/consultar-deposito/`; prueba `"10.100"` en `tests/unit/registrar-deposito/service.test.js`.
+- **Verificación:** `bash init.sh` completo verde; 268 pruebas + 2 todo (CD-T07/T08 hasta SPEC-11); cobertura 99,6 %.
+- **Veredicto:** APROBADO CON OBSERVACIONES (`progress/review_08.md`). Decisiones de impl_08 aceptadas sin escalar.
+- **Arrastrar:**
+  - SPEC-09..12: las suites de integración deben esperar a que la auditoría (escrita tras responder) termine
+    antes del `TRUNCATE` de `limpiar()` (patrón en `consultar.test.js:116-124`); valorar helper compartido.
+  - Estilo: líneas > 100 caracteres en `tests/integration/consultar-deposito/consultar.test.js`.
+  - SPEC-11: convertir CD-T07/T08.
+- **Cierre:** feature 8 `done`. Sesión pausada a petición del humano.
+
+## Pendientes de decisión humana (acumulados al 2026-11-02)
+1. Body > 100 kb → hoy 500 `ERROR_INTERNO` (DOM-R07). ¿400/413? (SPEC-06)
+2. `"10.100"` → 422 `MONTO_INVALIDO`. ¿Confirmar o aceptar ceros finales? (SPEC-07)
+3. Riesgo de doble acreditación si falla `PROCESANDO→COMPLETADO` tras acreditar. Documentar/cubrir en spec. (SPEC-07)

@@ -174,7 +174,7 @@
         "Activar o desactivar una extensión cambia extensiones sin tocar este módulo",
         "CD-T01..T06 y T09 pasan; CD-T07/T08 quedan como test.todo hasta SPEC-11"
       ],
-      "status": "pending"
+      "status": "done"
     },
     {
       "id": 9,

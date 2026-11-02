@@ -107,6 +107,15 @@ describe('SPEC-07 service: casos', () => {
     expect(deps.enTransaccion).not.toHaveBeenCalled();
   });
 
+  // Arrastre de review_07: los decimales se cuentan sobre el string, no sobre el valor.
+  test('RD-R03 monto "10.100" (3 decimales en el string) → ErrorApp MONTO_INVALIDO 422; billetera ni BD tocadas', async () => {
+    await expect(service.registrar({ ...DATOS, monto: '10.100' }, AGENTE_1, 'c'))
+      .rejects.toMatchObject({ codigo: 'MONTO_INVALIDO', status: 422 });
+    expect(deps.consultarCuenta).not.toHaveBeenCalled();
+    expect(deps.acreditar).not.toHaveBeenCalled();
+    expect(deps.enTransaccion).not.toHaveBeenCalled();
+  });
+
   test('RD-T03 monto "0.01" → acredita Decimal 0.01', async () => {
     const res = await service.registrar({ ...DATOS, monto: '0.01' }, AGENTE_1, 'c');
 
