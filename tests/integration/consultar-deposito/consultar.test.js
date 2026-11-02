@@ -23,8 +23,9 @@ const ID_INEXISTENTE = '00000000-0000-4000-8000-000000000000';
 const CREADO = '2026-10-13T19:20:00.000Z';
 const ACTUALIZADO = '2026-10-13T19:20:01.000Z';
 
-// SPEC-08: endpoint activo; extensiones de SPEC-10..12 inactivas (las de 10/11/12 aún no existen).
-function manifest({ consultar = 'activo', extra = [] } = {}) {
+// SPEC-08: endpoint activo; extensiones de SPEC-10..12 inactivas salvo conversion-moneda en
+// CD-T07.
+function manifest({ consultar = 'activo', conversion = 'inactivo', extra = [] } = {}) {
   return {
     version: 1,
     servicio: 'deposito-service',
@@ -32,7 +33,7 @@ function manifest({ consultar = 'activo', extra = [] } = {}) {
       { id: 'registrar-deposito', estado: 'activo', tipo: 'endpoint' },
       { id: 'consultar-deposito', estado: consultar, tipo: 'endpoint' },
       { id: 'limites-por-canal', estado: 'inactivo', tipo: 'validador', orden: 10 },
-      { id: 'conversion-moneda', estado: 'inactivo', tipo: 'transformador', orden: 10 },
+      { id: 'conversion-moneda', estado: conversion, tipo: 'transformador', orden: 10 },
       { id: 'alerta-uif', estado: 'inactivo', tipo: 'post-proceso', orden: 10 },
       ...extra,
     ],
@@ -53,6 +54,33 @@ async function insertarDeposito({
                             canal, referencia, estado, usuario_id, creado_en, actualizado_en)
      VALUES ($1, $2, '100.00', $3, '100.00', $3, $4, $5, $6, $7, $8, $9)`,
     [id, cuenta, moneda, canal, referencia, estado, usuario, CREADO, ACTUALIZADO],
+  );
+}
+
+// SPEC-11 §4: depósito USD a la cuenta PEN, convertido con 3.7500 (fila en conversiones_deposito).
+const TIPO_CAMBIO = '00000000-0000-0000-0000-000000000001';
+const EXTENSION_CONVERSION = {
+  monedaCuenta: 'PEN', tipoCambio: '3.7500', montoAcreditado: '375.00',
+};
+
+async function insertarDepositoConvertido() {
+  await pool.query(
+    `INSERT INTO tipos_cambio (id, moneda_origen, moneda_destino, valor, vigente_desde)
+     VALUES ($1, 'USD', 'PEN', 3.7500, '2026-01-01T00:00:00Z')`,
+    [TIPO_CAMBIO],
+  );
+  await pool.query(
+    `INSERT INTO depositos (id, cuenta_destino, monto, moneda, monto_acreditar, moneda_acreditar,
+                            canal, referencia, estado, usuario_id, creado_en, actualizado_en)
+     VALUES ($1, $2, '100.00', 'USD', '375.00', 'PEN', 'APP', NULL, 'COMPLETADO',
+             'usr-cliente-1', $3, $4)`,
+    [ID, CUENTA, CREADO, ACTUALIZADO],
+  );
+  await pool.query(
+    `INSERT INTO conversiones_deposito (deposito_id, tipo_cambio_id, moneda_cuenta, tipo_cambio,
+                                        monto_final)
+     VALUES ($1, $2, 'PEN', 3.7500, 375.00)`,
+    [ID, TIPO_CAMBIO],
   );
 }
 
@@ -214,9 +242,35 @@ describe('SPEC-08 consultar-deposito: casos', () => {
     expect(consulta.peticiones).toHaveLength(0);
   });
 
-  test.todo('CD-T07 depósito con fila en conversiones_deposito y conversion-moneda activa → extensiones.conversion-moneda presente (espera SPEC-11)');
+  test('CD-T07 depósito con fila en conversiones_deposito, conversion-moneda activa → '
+    + 'extensiones.conversion-moneda presente', async () => {
+    const app = crearApp({ manifest: manifest({ conversion: 'activo' }) });
+    await insertarDepositoConvertido();
+    billetera.cuentaActiva(CUENTA);
 
-  test.todo('CD-T08 el mismo depósito con conversion-moneda inactiva → extensiones sin esa clave (espera SPEC-11)');
+    const res = await get(app, ID);
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual(cuerpoEsperado({
+      moneda: 'USD',
+      canal: 'APP',
+      extensiones: { 'conversion-moneda': EXTENSION_CONVERSION },
+    }));
+  });
+
+  test('CD-T08 el mismo depósito con conversion-moneda inactiva → extensiones sin esa clave',
+    async () => {
+      const app = crearApp({ manifest: manifest({ conversion: 'inactivo' }) });
+      await insertarDepositoConvertido();
+      billetera.cuentaActiva(CUENTA);
+
+      const res = await get(app, ID);
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual(cuerpoEsperado({ moneda: 'USD', canal: 'APP', extensiones: {} }));
+      const { rows } = await pool.query('SELECT count(*)::int AS n FROM conversiones_deposito');
+      expect(rows[0].n).toBe(1);
+    });
 
   test('CD-T09 usr-cliente-1 y billetera 500 → 502 BILLETERA_NO_DISPONIBLE', async () => {
     const app = crearApp({ manifest: manifest() });
