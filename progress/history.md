@@ -83,3 +83,20 @@
   - SPEC-06: prueba de `req.ip` con `X-Forwarded-For` y `trust proxy`; orden de montaje PIP-R11.
   - SPEC-05/07: `res.locals.depositoId` siempre debe ser un id existente (si no, el INSERT falla y solo se loguea).
 - **Cierre:** feature 4 `done`. Próximo: SPEC-05 (idempotencia).
+
+## 2026-11-02 — Feature 5: idempotencia (SPEC-05)
+- **Agentes:** leader → desarrolladorback → tester → revisor.
+- **Cambios:** `db/05-idempotencia.sql`, `src/core/repositories/idempotenciaRepository.js`,
+  `src/core/middlewares/idempotencia.js`, `src/core/tareas/limpiarClaves.js`,
+  `tests/integration/idempotencia/idempotencia.test.js`.
+- **Verificación:** `bash init.sh` completo verde; 129 pruebas + 13 todo; cobertura `src/core/` 99,6 %.
+  Reales: IDE-T01, IDE-T09 (+17 pruebas por regla IDE-R01..R09).
+- **Veredicto:** APROBADO CON OBSERVACIONES (`progress/review_05.md`).
+- **Decisiones no cubiertas por la spec (informadas al humano, no bloqueantes):**
+  - Conflicto en el INSERT y fila ausente al leerla → 409 `SOLICITUD_EN_PROCESO`.
+  - `deposito_id` tiene FK a `depositos`: si `res.locals.depositoId` no existe, el guardado falla,
+    se loguea y la clave queda `EN_PROCESO` hasta la limpieza.
+- **Arrastrar:**
+  - SPEC-07: asignar `res.locals.depositoId` solo cuando la fila del depósito exista.
+  - SPEC-07: convertir IDE-T02..T08 e IDE-T10 en pruebas reales con nock; AUD-T04 sigue en todo.
+- **Cierre:** feature 5 `done`. Próximo: SPEC-06 (pipeline y cargador).

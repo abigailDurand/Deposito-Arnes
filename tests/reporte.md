@@ -312,3 +312,82 @@ Tests:       5 todo, 105 passed, 110 total
 
 - `src/core/`: 98,64 % stmts · 94,59 % branches (≥ 80 %). `src/modules/` aún sin código.
 - Ramas no cubiertas de `auditoria.js` (55-65): los `?? null` de `req.ip`, `req.correlationId` y `err?.code` (siempre definidos en la app real).
+
+## SPEC-05
+
+- **Agente:** tester · **Fecha:** 2026-11-02 · **Feature:** 5 (`idempotencia`)
+- **Ejecución:** `bash init.sh` completo → `EXIT=0`. PostgreSQL real (`deposito_test`), `--runInBand`.
+  `[OK] SPEC-05: todos sus casos tienen prueba (todo: IDE-T02..T08, IDE-T10)` · alcance OK (96 archivos)
+  · `Test Suites: 9 passed · Tests: 13 todo, 129 passed, 142 total`.
+- **App de prueba:** SPEC-06/07 aún no existen → app Express mínima en el orden de SPEC-05 §6:
+  `correlationId → autenticar → express.json → POST /api/v1/depositos [idempotencia → controller falso] → manejadorErrores`.
+  El controller falso lo define cada prueba (status, cuerpo, `res.locals.depositoId`, `ErrorApp` 502,
+  error no controlado 500, o espera bloqueada para simular "billetera lenta"). Un observador en `finish`
+  captura `res.locals.depositoId` y `req.idempotencia`. Los depósitos referenciados (FK) se insertan
+  en `depositos` con la cuenta `0011-0123-456789` (SPEC-02 §4); usuarios `usr-agente-1`/`usr-agente-2`.
+- Archivo único (el que nombra el §2): `tests/integration/idempotencia/idempotencia.test.js`.
+
+### Casos cubiertos
+
+| Caso | Archivo | Resultado |
+|---|---|---|
+| IDE-T01 clave nueva → controller 1 vez, 201 sin `Idempotency-Replayed`; fila `TERMINADO`, `status_http` 201, `respuesta` = cuerpo, `deposito_id` = `res.locals.depositoId` | `tests/integration/idempotencia/idempotencia.test.js` | ✅ |
+| IDE-T01 (variante) respuesta 422 → fila `TERMINADO` con 422 y `deposito_id` nulo | idem | ✅ |
+| IDE-T09 sin header → 400 `{ codigo: IDEMPOTENCY_KEY_REQUERIDA, mensaje, correlationId }`; controller 0 veces; 0 filas | idem | ✅ |
+| IDE-T09 clave de 7 caracteres → 400 `IDEMPOTENCY_KEY_REQUERIDA`; controller 0 veces; 0 filas | idem | ✅ |
+
+Pruebas extra por regla (sin caso numerado; cubren con controller falso lo que SPEC-07 probará de punta a punta), mismo archivo, todas ✅:
+
+- IDE-R01: `claveValida` con 8 y 100 (válidas), 7, 101, vacía, `undefined`, número (inválidas); por HTTP 101 → 400, 8 y 100 → 201.
+- IDE-R03: `calcularHash` = SHA-256 de `"POST /api/v1/depositos?x=1 {…}"` con llaves ordenadas recursivamente y arrays en orden; body `undefined`; `hash_solicitud` en BD igual al esperado.
+- IDE-R07 (≈ IDE-T02 sin billetera): repetición con llaves en otro orden → mismo status y cuerpo, `Idempotency-Replayed: true`, `X-Correlation-Id` de la petición actual, `res.locals.depositoId` asignado, controller 1 vez; respuesta guardada sin `deposito_id` → no asigna `res.locals.depositoId`; sin middleware correlationId → sin `X-Correlation-Id`.
+- IDE-R05 (≈ IDE-T03/T04): monto distinto → 409 `IDEMPOTENCY_KEY_REUTILIZADA` con el cuerpo de §5; clave `EN_PROCESO` (controller bloqueado, 2.º POST a los 100 ms) → 409 `SOLICITUD_EN_PROCESO` con el cuerpo exacto de §5; con `EN_PROCESO` y hash distinto gana `REUTILIZADA`; la fila desaparece entre el INSERT en conflicto y el SELECT → 409 `SOLICITUD_EN_PROCESO`.
+- IDE-R04 (≈ IDE-T05): 5 POST simultáneos → controller 1 vez, 1×201 y 4×409 `SOLICITUD_EN_PROCESO`, 1 fila.
+- IDE-R02 (≈ IDE-T10): `usr-agente-1` y `usr-agente-2` con la misma clave → ambos procesados, 2 filas `TERMINADO`.
+- IDE-R08 (≈ IDE-T06/T08): 500 → clave borrada y el reintento se procesa como nuevo (sin `req.idempotencia`); 502 sin `depositoId` → clave borrada; 502 con `depositoId` → `REINTENTABLE` con ese `deposito_id`; guardado que falla (FK con id inexistente, y `terminar` rechazado sin `code`) → 201 igual, `logger.error` 1 vez con `{ correlationId, status, codigoError }` y sin cuenta ni clave; la fila queda `EN_PROCESO`.
+- IDE-R06: reintento de `REINTENTABLE` → `req.idempotencia = { depositoIdPrevio }`, 201 y fila `TERMINADO` con el mismo `deposito_id`; la 3.ª petición se repite; reintento en curso + otro → 409; carrera real en PostgreSQL (otra petición pasa la fila a `EN_PROCESO` entre el SELECT y el UPDATE) → UPDATE de 0 filas → 409 `SOLICITUD_EN_PROCESO`.
+- IDE-R09: `borrarAntiguas(pool, config.idempotenciaDias)` (7) borra las 3 claves de más de 7 días en `EN_PROCESO`, `TERMINADO` y `REINTENTABLE`, conserva las de 6 y 0 días y devuelve 3; `limpiarClaves.iniciar()` programa `setInterval` de 3 600 000 ms con `unref()`, la tarea borra y loguea `{ borradas: 3 }`; si `borrarAntiguas` falla → `logger.error({ codigoError })` (con y sin `code`) y la tarea no rechaza.
+
+Nota: los `jest.spyOn` sobre `idempotenciaRepository` envuelven la llamada real (provocan la carrera con
+SQL real sobre PostgreSQL) o fuerzan un rechazo para la rama de fallo del guardado/limpieza; PostgreSQL
+no se mockea. `setInterval` se espía solo para no esperar 1 h.
+
+### Casos en `test.todo`
+
+| Caso | Espera | Motivo |
+|---|---|---|
+| IDE-T02 repetir → mismo status/cuerpo, billetera 1 vez | SPEC-07 | Requiere el controller real que llama a billetera (nock) |
+| IDE-T03 monto distinto → 409 `IDEMPOTENCY_KEY_REUTILIZADA` | SPEC-07 | El §6 lo asigna a la ruta real (cubierto por regla IDE-R05 arriba) |
+| IDE-T04 billetera tarda 2 s → 409 `SOLICITUD_EN_PROCESO` | SPEC-07 | Requiere la acreditación real lenta |
+| IDE-T05 5 POST simultáneos → 1 depósito, 1 acreditación | SPEC-07 | Cuenta depósitos y acreditaciones reales |
+| IDE-T06 billetera 500 al acreditar, reintento → mismo `id` y mismo `depositoId` a billetera | SPEC-07 | Requiere el flujo de acreditación |
+| IDE-T07 timeout, reintento con billetera 409 → 201 COMPLETADO | SPEC-07 | idem |
+| IDE-T08 billetera 500 al consultar, reintento → nuevo | SPEC-07 | idem |
+| IDE-T10 dos agentes, misma clave → ambos procesados | SPEC-07 | El §6 lo asigna a la ruta real (cubierto por regla IDE-R02 arriba) |
+
+`test.todo` anteriores revisados: `AUD-T04` (auditoría) espera SPEC-05 **y** SPEC-07 → sigue en `todo`.
+
+### Pruebas fallidas
+
+Ninguna.
+
+### Cobertura (`src/core/` y `src/modules/`)
+
+```
+----------------------------|---------|----------|---------|---------|-------------------
+File                        | % Stmts | % Branch | % Funcs | % Lines | Uncovered Line #s
+----------------------------|---------|----------|---------|---------|-------------------
+All files                   |   99.64 |    94.38 |   98.38 |   99.61 |
+ core/middlewares           |     100 |    94.87 |     100 |     100 |
+  idempotencia.js           |     100 |      100 |     100 |     100 |
+ core/repositories          |     100 |     87.5 |     100 |     100 |
+  idempotenciaRepository.js |     100 |     87.5 |     100 |     100 | 41
+ core/tareas                |     100 |      100 |     100 |     100 |
+  limpiarClaves.js          |     100 |      100 |     100 |     100 |
+----------------------------|---------|----------|---------|---------|-------------------
+Test Suites: 9 passed, 9 total
+Tests:       13 todo, 129 passed, 142 total
+```
+
+- `src/core/`: de ~67 % a 99,64 % stmts · 94,38 % branches (≥ 80 %). `src/modules/` aún sin código.
+- Rama no cubierta de `idempotenciaRepository.js:41`: `respuesta ?? null` / `depositoId ?? null` en `terminar` cuando llegan `undefined` (el middleware ya pasa `null`).
