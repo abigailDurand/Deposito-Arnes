@@ -39,10 +39,12 @@ Retrabajo por la integración con Billetera USD (specs aprobadas por el humano; 
 
 - SPEC-00 tester: `done -> tests/reporte.md` (proyecto.test.js actualizado; init.sh 357/357).
 
+- SPEC-00 revisor: APROBADO (`progress/review_00.md`), feature 0 → `done`. El revisor fue cortado por límite de uso mientras corría init.sh; el leader lo repitió: verde 357/357 (antes hubo que levantar `db`).
+
 ## Bloqueos
 
 _Ninguno._
 
 ## Próximo paso
 
-PAUSADO por el humano (2026-11-02). Revisor de SPEC-00 en curso al pausar; no avanzar a SPEC-01 hasta que el humano lo indique.
+PAUSADO por el humano (2026-11-02). SPEC-00 cerrada. Siguiente cuando el humano lo indique: SPEC-01 (dev → revisor).
