@@ -224,3 +224,34 @@
 4. CM-R02: confirmar "vigente" con `now()` de la BD. (SPEC-11)
 5. UIF-R04: validación de umbrales no numéricos. (SPEC-12)
 6. Commits de SPEC-09..12 pendientes (no se hicieron en esta sesión).
+
+## 2026-11-02/03 — Retrabajo: integración con Billetera USD (rama `inte_biUsd`)
+- **Origen:** el humano aprobó SPEC-02 v2.0 (billetera PEN propuesta + Billetera USD, contrato
+  `docs/referencia/Billetera_USD_openapi.yaml` v1.1.0) y los cambios en 00, 01, 07, 08, 09. Nuevo estado
+  `reabierta` + campo `retrabajo` en el arnés (AGENTS.md §5).
+- **Ramas:** `main` se reseteó a `fba344d` (pre-USD) por orden del humano. El trabajo de un compañero
+  (`codigo/`, fuera del alcance de init.sh, 28/374 pruebas rojas) quedó en la rama `Busti`; se usó como
+  referencia descartando sus defectos (`armarContexto` sin logger/db, `montoValido` con `decimalPlaces()`,
+  regex UUID con `/i`).
+- **Features y commits:**
+  | Spec | Agentes | Commit |
+  |---|---|---|
+  | 00 config `BILLETERA_USD_*` | dev → tester → revisor | `12f2b19`, `36fc622` |
+  | 01 `cuenta_destino VARCHAR(36)` | dev → revisor | `a70dd04` |
+  | 02 billeteras PEN/USD, enrutamiento, mock, INT-T08..T15 | dev → tester → revisor ✗ → tester → revisor | `fc01ac7` |
+  | 03 solo pruebas (datos v2.0) | tester → revisor | `58d8e0a` |
+  | 07 RD-R02/R08/R11, RD-T13..T18 | dev → tester → revisor | `c3af846` |
+  | 08 CD-T10..T13 | tester → revisor | `e4f8fac` |
+  | 09 HD-R01, HD-T09..T12 | dev → tester → revisor | `fc9430f` |
+  | 11 solo pruebas; CM-R03 PEN→USD de `todo` a real | tester → revisor | `7539b67` |
+  | 12 solo pruebas | tester → revisor | `cec77a2` |
+- **Rechazo único:** SPEC-02 por un deadlock preexistente en `registrar.test.js` (auditoría `res.on('finish')`
+  vs `TRUNCATE`); corregido esperando la auditoría antes de limpiar.
+- **Verificación final:** `bash init.sh` (leader) 409/409, 0 todo; 13 features `done`; campo `retrabajo` retirado.
+- **Pendientes de decisión humana (Billetera USD, `[POR ACORDAR]` de SPEC-02):**
+  1. ¿`POST /api/v1/depositos/usd` deja el depósito `COMPLETADO` en la misma petición? (hoy otro estado → 502).
+  2. Mapeo `metodo_origen` por canal (VENTANILLA/AGENTE → EFECTIVO, APP → TRANSFERENCIA).
+  3. Billetera USD no expone estado: hoy toda billetera existente se trata como `ACTIVA`.
+  4. Autenticación entre servicios (`BILLETERA_USD_TOKEN` opcional).
+- **Arrastrar:** el mock `billetera-mock` con rutas USD no se probó levantado con docker (solo por lectura y nock).
+  Un revisor borró `node_modules` al quitar un worktree con unión; se restauró con `npm ci`. No usar uniones.

@@ -27,8 +27,7 @@
         "Ningún secreto ni URL aparece en el código fuente",
         "PRY-T02 y PRY-T03 pasan; PRY-T01 queda como test.todo hasta SPEC-06"
       ],
-      "status": "done",
-      "retrabajo": true
+      "status": "done"
     },
     {
       "id": 1,
@@ -44,8 +43,7 @@
         "El objeto Deposito tiene la misma forma en todas las respuestas",
         "DOM-T01 a DOM-T08 pasan"
       ],
-      "status": "done",
-      "retrabajo": true
+      "status": "done"
     },
     {
       "id": 2,
@@ -62,8 +60,7 @@
         "Cambiar al billetera-service real solo requiere cambiar BILLETERA_URL y BILLETERA_TOKEN",
         "INT-T01 a INT-T07 pasan"
       ],
-      "status": "done",
-      "retrabajo": true
+      "status": "done"
     },
     {
       "id": 3,
@@ -81,8 +78,7 @@
         "Toda petición queda en el log con su correlation id",
         "SEG-T01..T05 y T07..T10 pasan; SEG-T06 queda como test.todo hasta SPEC-07"
       ],
-      "status": "done",
-      "retrabajo": true
+      "status": "done"
     },
     {
       "id": 4,
@@ -159,8 +155,7 @@
         "Con todas las extensiones inactivas, el depósito funciona igual",
         "RD-T01 a RD-T12 pasan; los test.todo de SEG, AUD e IDE que esperaban SPEC-07 pasan a pruebas reales"
       ],
-      "status": "done",
-      "retrabajo": true
+      "status": "done"
     },
     {
       "id": 8,
@@ -180,8 +175,7 @@
         "Activar o desactivar una extensión cambia extensiones sin tocar este módulo",
         "CD-T01..T06 y T09 pasan; CD-T07/T08 quedan como test.todo hasta SPEC-11"
       ],
-      "status": "done",
-      "retrabajo": true
+      "status": "done"
     },
     {
       "id": 9,
@@ -200,8 +194,7 @@
         "La paginación y los filtros devuelven siempre un total coherente con la lista",
         "HD-T01 a HD-T08 pasan"
       ],
-      "status": "done",
-      "retrabajo": true
+      "status": "done"
     },
     {
       "id": 10,
@@ -237,8 +230,7 @@
         "Sin la feature, un depósito en otra moneda se rechaza con 422",
         "CM-T01 a CM-T08 pasan; CD-T07/T08 dejan de ser test.todo"
       ],
-      "status": "done",
-      "retrabajo": true
+      "status": "done"
     },
     {
       "id": 12,
@@ -255,8 +247,7 @@
         "La alerta nunca afecta al depósito ni la ve el cliente",
         "UIF-T01 a UIF-T07 pasan"
       ],
-      "status": "done",
-      "retrabajo": true
+      "status": "done"
     }
   ]
 }
