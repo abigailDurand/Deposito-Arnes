@@ -235,83 +235,78 @@ All files                    |   99.72 |     95.1 |   99.23 |   99.84 |
 
 ## SPEC-03
 
-- **Agente:** tester · **Fecha:** 2026-10-30 · **Feature:** 3 (`seguridad`)
-- **Ejecución:** `bash init.sh` completo → `EXIT=0` (PostgreSQL real arriba).
-  `[OK] SPEC-03: todos sus casos tienen prueba (todo: SEG-T06)`. `Test Suites: 7 passed · Tests: 2 todo, 87 passed, 89 total`.
-- T01–T05, T08–T10 montan los middlewares reales en una app Express mínima dentro del test
-  (`correlationId → GET /health → autenticar → rutas → manejadorErrores`, orden de PIP-R11) y se
-  prueban con Supertest. Tokens con `tests/helpers/tokens.js` (otra clave RSA generada en el test,
-  `alg: none`, `aud` distinto, `exp` pasado). La integración no necesita filas, pero respeta
-  `limpiar()` en `beforeEach`.
-- **SEG-T09 sin vaciar el log:** se usa pino real con las opciones reales de `src/core/logger.js`
-  (en `jest.isolateModules` con `LOG_LEVEL=info` solo durante la carga; únicamente se redirige el
-  destino a un `Writable`). Se cargan `correlationId`, `auth` y `manejadorErrores` en ese mismo
-  registro, así toda la salida JSON de la petición (log de petición + `logger.error` del 500) queda capturada.
+- **Agente:** tester · **Fecha:** 2026-11-03 · **Feature:** 3 (`seguridad`) · **Retrabajo** Billetera USD, rama `inte_biUsd`.
+- La spec 03 no cambió; se actualizaron las pruebas que usaban datos obsoletos de SPEC-02 §4 (v2.0):
+  `0011-0123-000002` es ahora ACTIVA **PEN** (titular `usr-cliente-2`) y las billeteras USD son
+  `11111111-1111-4111-8111-111111111111` (`usr-cliente-1`) y `22222222-2222-4222-8222-222222222222` (`usr-cliente-2`).
+- **Ejecución:** `bash init.sh` completo (PostgreSQL real) → `Test Suites: 23 passed, 23 total` ·
+  `Tests: 1 todo, 380 passed, 381 total` · `[OK] Todas las pruebas en verde`.
+- T01–T05 y T07–T10 montan los middlewares reales en una app Express mínima (`correlationId → GET /health →
+  autenticar → rutas → manejadorErrores`, orden de PIP-R11). SEG-T09 usa pino real (opciones de
+  `src/core/logger.js`) con el destino redirigido a un `Writable`. SEG-T06 usa `crearApp` real, PostgreSQL
+  real y billetera con nock (helpers de SPEC-02).
+
+### Cambios del retrabajo
+
+- `tests/unit/seguridad/permisos.test.js`: **eliminada** `CUENTA_USD` (`0011-0123-000002` con `moneda: 'USD'`).
+  Sustituida por `CUENTA_PEN_2` (`0011-0123-000002`, PEN, `usr-cliente-2`) y `BILLETERA_USD_1` / `BILLETERA_USD_2`
+  con la forma que devuelve `consultarCuenta` para USD (INT-R04: `numero` = UUID, `estado: 'ACTIVA'`, `moneda: 'USD'`,
+  `titularId` = `user_id`). `verificarTitular` (SEG-R11) y `esTitular` (SEG-R12) se prueban ahora con cuenta PEN
+  propia/ajena **y** billetera USD propia/ajena; AGENTE y CAJERO a las cuatro.
+- `tests/integration/seguridad/seguridad.test.js` (SEG-T06): el depósito a `0011-0123-000002` se envía con
+  `moneda: 'PEN'` (antes `'USD'`; con la cuenta ya PEN el 403 dependía del orden titular/moneda en el service).
+  Nuevo control: `usr-cliente-2` (titular) a `0011-0123-000002` → 201 y una acreditación PEN, que demuestra que el
+  403 se debe solo al titular. `afterEach` del bloque SEG-T06 espera la auditoría (`esperarAuditoria`, mismo patrón
+  que `registrar.test.js`) antes del `TRUNCATE` del siguiente `limpiar()`, para evitar deadlocks.
+- SEG-T06 vía endpoint con billetera USD (`22222222-…`) **no** se añade: no es un caso de SPEC-03 y
+  `registrar-deposito/schema.js:7` aún solo acepta el formato PEN (RD-R02 de dos formatos es el retrabajo de SPEC-07).
+  La regla de titular sobre billetera USD queda cubierta en la unitaria.
 
 ### Casos cubiertos
 
 | Caso | Archivo | Resultado |
 |---|---|---|
-| SEG-T01 sin `Authorization` → 401 `TOKEN_REQUERIDO` (+ `Basic …`, `Bearer ` vacío, token sin `Bearer`) | `tests/integration/seguridad/seguridad.test.js` | ✅ |
+| SEG-T01 sin `Authorization` → 401 `TOKEN_REQUERIDO` (+ `Basic …`, `Bearer ` vacío, sin `Bearer`) | `tests/integration/seguridad/seguridad.test.js` | ✅ |
 | SEG-T02 `exp` en el pasado → 401 `TOKEN_EXPIRADO` | `tests/integration/seguridad/seguridad.test.js` | ✅ |
 | SEG-T03 firmado con otra clave → 401 `TOKEN_INVALIDO` | `tests/integration/seguridad/seguridad.test.js` | ✅ |
 | SEG-T04 `alg: none` → 401 `TOKEN_INVALIDO` | `tests/integration/seguridad/seguridad.test.js` | ✅ |
 | SEG-T05 `aud` distinto → 401 `TOKEN_INVALIDO` | `tests/integration/seguridad/seguridad.test.js` | ✅ |
-| SEG-T07 `verificarCanal` CLIENTE + VENTANILLA → lanza `ErrorApp` `SIN_PERMISO` (403) | `tests/unit/seguridad/permisos.test.js` | ✅ |
-| SEG-T08 sin `X-Correlation-Id` → UUID no vacío (distinto por petición); con `abc` → `abc`; también en header y cuerpo de un 401 | `tests/integration/seguridad/seguridad.test.js` | ✅ |
-| SEG-T09 500 forzado en `POST /cuentas/0011-0123-456789/depositos` → la salida del log no contiene el JWT, ni su firma, ni `0011-0123-456789` / `0011-0123`; el registro trae `status: 500`, `duracionMs` entero ≥ 0, `usuarioId`, `metodo`, ruta enmascarada | `tests/integration/seguridad/seguridad.test.js` | ✅ |
+| SEG-T06 `usr-cliente-1` deposita (APP, PEN) a `0011-0123-000002` → 403 `SIN_PERMISO`; billetera consultada 1 vez, 0 acreditaciones; 0 filas en `depositos`; auditoría `ERROR_403`. Controles: `usr-cliente-1` a su cuenta y `usr-cliente-2` a `000002` → 201 con 1 acreditación | `tests/integration/seguridad/seguridad.test.js` | ✅ |
+| SEG-T07 `verificarCanal` CLIENTE + VENTANILLA → `ErrorApp` `SIN_PERMISO` (403) | `tests/unit/seguridad/permisos.test.js` | ✅ |
+| SEG-T08 sin `X-Correlation-Id` → UUID (distinto por petición); con `abc` → `abc`; también en header y cuerpo de un 401 | `tests/integration/seguridad/seguridad.test.js` | ✅ |
+| SEG-T09 500 forzado → el log no contiene el JWT, su firma ni la cuenta completa; sí `status: 500` y `duracionMs` | `tests/integration/seguridad/seguridad.test.js` | ✅ |
 | SEG-T10 `requiereRol('AGENTE')` con token CLIENTE → 403 `{ codigo: SIN_PERMISO, mensaje, correlationId }` | `tests/integration/seguridad/seguridad.test.js` | ✅ |
 
-Pruebas extra (justificadas por SEG-R01/R03/R06/R08/R09–R13), todas ✅:
-
-- SEG-R06 token mal formado → `TOKEN_INVALIDO`; SEG-R08 token válido → `req.usuario = { id, roles }`; `/health` responde sin token.
-- SEG-R09 rol permitido pasa, lista de varios roles; sin `req.usuario` → `SIN_PERMISO`; `requiereRol()` sin roles lanza.
-- SEG-R01 id de exactamente 100 caracteres se respeta; 101 caracteres, espacio, `;`, `.` → UUID nuevo.
-- SEG-R03 petición cortada en `autenticar` (401) → registro con `usuarioId: null`, sin el token.
-- SEG-R10 tabla completa rol × canal, canal/rol desconocido (`toString`), sin roles/usuario; SEG-R13 varios roles.
-- SEG-R11 CLIENTE propio/ajeno/`null`; AGENTE y CAJERO a cualquier cuenta. SEG-R12 `esTitular` siempre booleano.
+Pruebas extra (SEG-R01/R03/R06/R08–R13), todas ✅: token mal formado y payload firmado sin `sub`/`sub` vacío/
+`roles` vacío, ausente o no arreglo → `TOKEN_INVALIDO`; `req.usuario`; `/health` sin token; `requiereRol` con varios
+roles, sin `req.usuario`, sin roles al construir; correlation id de 100/101 caracteres y caracteres inválidos; log de
+petición cortada en `autenticar`; tabla rol × canal completa y congelada; varios roles; `verificarTitular`/`esTitular`
+con cuentas PEN y billeteras USD de §4.
 
 ### Casos en `test.todo`
 
-Ninguno (estado vigente, 2026-11-02). SEG-T06 era `test.todo` (esperaba SPEC-07) y **se convirtió en prueba
-real** al probar SPEC-07:
-
-| Caso | Archivo | Resultado |
-|---|---|---|
-| SEG-T06 `usr-cliente-1` deposita a `0011-0123-000002` → 403 `SIN_PERMISO`; billetera consultada pero sin acreditación; 0 filas; auditoría `ERROR_403` | `tests/integration/seguridad/seguridad.test.js` | ✅ |
-
-Las cifras de `Tests:` de esta sección (`2 todo`) son de la corrida original de SPEC-03.
+Ninguno de SPEC-03. (El único `todo` de la suite completa no es de esta spec.)
 
 ### Pruebas fallidas
 
 Ninguna.
 
-### Cobertura (`src/core/` y `src/modules/`)
+### Cobertura (`src/core/` y `src/modules/`), corrida completa de `init.sh`
 
 ```
-----------------------|---------|----------|---------|---------|-------------------
-File                  | % Stmts | % Branch | % Funcs | % Lines | Uncovered Line #s
-----------------------|---------|----------|---------|---------|-------------------
-All files             |   98.75 |     93.4 |   97.14 |   99.31 |
- core                 |   98.64 |    94.59 |   93.75 |   98.55 |
-  db.js               |   94.73 |      100 |      50 |   94.73 | 14
-  depositoMapper.js   |     100 |    83.33 |     100 |     100 | 24
-  errores.js          |     100 |    92.85 |     100 |     100 | 62
-  logger.js           |     100 |      100 |     100 |     100 |
-  permisos.js         |     100 |      100 |     100 |     100 |
- core/clients         |     100 |    92.85 |     100 |     100 |
-  billeteraClient.js  |     100 |    92.85 |     100 |     100 | 45
- core/middlewares     |   98.33 |     92.5 |     100 |     100 |
-  auth.js             |   96.42 |    94.73 |     100 |     100 | 43
-  correlationId.js    |     100 |    77.77 |     100 |     100 | 18
-  manejadorErrores.js |     100 |      100 |     100 |     100 |
-----------------------|---------|----------|---------|---------|-------------------
+File                         | % Stmts | % Branch | % Funcs | % Lines
+All files                    |   99.72 |     95.1 |   99.23 |   99.84
+ core                        |   99.46 |    94.73 |   97.14 |   99.42
+  permisos.js                |     100 |      100 |     100 |     100
+ core/clients                |     100 |    95.12 |     100 |     100
+ core/middlewares            |     100 |    94.87 |     100 |     100
+  auth.js                    |     100 |      100 |     100 |     100
+  correlationId.js           |     100 |    77.77 |     100 |     100
+ modules/registrar-deposito  |     100 |      100 |     100 |     100
 ```
 
-- `src/core/`: todas las métricas ≥ 93 % (umbral 80 % cumplido; antes 65 % por falta de estas pruebas).
-- Sin cubrir: `auth.js:43` (rama de `payloadValido` para un token firmado sin `sub` o con `roles: []`; el helper solo firma usuarios de SPEC-02 §4) y `correlationId.js:18` (fallback `req.url`/`''` de `rutaParaLog`, inalcanzable en Express).
-- `src/modules/`: sin código todavía.
-- **Correcciones tras review** (`progress/review_03.md`, obs. 1): añadido `describe('SEG-R06 payload firmado correctamente pero incompleto')` en `tests/integration/seguridad/seguridad.test.js` — tokens RS256 firmados con `jsonwebtoken` y `tests/.tmp/privada.pem` (iss/aud/exp válidos): control con `sub`+`roles` → 200; sin `sub`, `sub: ''`, `roles: []`, sin `roles`, `roles` no arreglo → 401 `TOKEN_INVALIDO`. `bash init.sh` → `EXIT=0`, `Tests: 2 todo, 93 passed, 95 total`; `auth.js` pasa a 100 % (stmts/branch), `src/core/` All files 99.37 % stmts / 94.5 % branch. Ya no queda sin cubrir `auth.js:43`.
+- Todo `src/core/` y `src/modules/` ≥ 80 % (umbral cumplido). `correlationId.js:18` (rama de fallback de
+  `rutaParaLog`) sigue sin cubrir: inalcanzable en Express; el archivo está al 100 % en líneas.
 
 ## SPEC-04
 

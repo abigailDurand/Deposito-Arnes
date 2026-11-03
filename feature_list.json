@@ -81,7 +81,7 @@
         "Toda petición queda en el log con su correlation id",
         "SEG-T01..T05 y T07..T10 pasan; SEG-T06 queda como test.todo hasta SPEC-07"
       ],
-      "status": "reabierta",
+      "status": "done",
       "retrabajo": true
     },
     {

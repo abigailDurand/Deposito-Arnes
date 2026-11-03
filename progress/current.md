@@ -71,3 +71,5 @@ SPEC-01 (dev → revisor). Luego SPEC-02 con `Busti:codigo/` como referencia.
   helpers nock PEN+USD. `init.sh` completo: 354/357; 3 fallas esperadas por `000002` ya PEN (INT-T01, verificarTitular
   en registrar.test.js, CM-R03 en conversion.test.js) + pruebas obsoletas listadas en `progress/impl_02.md`. Siguiente: tester.
 - SPEC-02: dev → tester → revisor RECHAZADO (deadlock preexistente en registrar.test.js) → tester corrigió → revisor APROBADO (`progress/review_02.md`). Leader: init.sh 379 + 1 todo.
+- SPEC-03 → `in_progress` (solo pruebas: tester → revisor).
+- SPEC-03: tester → revisor APROBADO (`progress/review_03.md`). Leader: init.sh 380 + 1 todo.

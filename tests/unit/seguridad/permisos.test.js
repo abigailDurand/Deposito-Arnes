@@ -14,8 +14,21 @@ const CLIENTE_2 = { id: 'usr-cliente-2', roles: ['CLIENTE'] };
 const AGENTE_1 = { id: 'usr-agente-1', roles: ['AGENTE'] };
 const CAJERO_1 = { id: 'usr-cajero-1', roles: ['CAJERO'] };
 
+// Forma que devuelve billeteraClient.consultarCuenta (INT-R11 para PEN, INT-R04 para USD).
 const CUENTA_PEN = { numero: '0011-0123-456789', estado: 'ACTIVA', moneda: 'PEN', titularId: 'usr-cliente-1' };
-const CUENTA_USD = { numero: '0011-0123-000002', estado: 'ACTIVA', moneda: 'USD', titularId: 'usr-cliente-2' };
+const CUENTA_PEN_2 = { numero: '0011-0123-000002', estado: 'ACTIVA', moneda: 'PEN', titularId: 'usr-cliente-2' };
+const BILLETERA_USD_1 = {
+  numero: '11111111-1111-4111-8111-111111111111',
+  estado: 'ACTIVA',
+  moneda: 'USD',
+  titularId: 'usr-cliente-1',
+};
+const BILLETERA_USD_2 = {
+  numero: '22222222-2222-4222-8222-222222222222',
+  estado: 'ACTIVA',
+  moneda: 'USD',
+  titularId: 'usr-cliente-2',
+};
 
 function capturar(fn) {
   try {
@@ -72,31 +85,39 @@ describe('verificarCanal (SEG-R10)', () => {
 });
 
 describe('verificarTitular (SEG-R11)', () => {
-  test('CLIENTE por APP a su propia cuenta → pasa', () => {
+  test('CLIENTE por APP a su propia cuenta PEN o billetera USD → pasa', () => {
     expect(() => verificarTitular(CLIENTE_1, 'APP', CUENTA_PEN)).not.toThrow();
-    expect(() => verificarTitular(CLIENTE_2, 'APP', CUENTA_USD)).not.toThrow();
+    expect(() => verificarTitular(CLIENTE_1, 'APP', BILLETERA_USD_1)).not.toThrow();
+    expect(() => verificarTitular(CLIENTE_2, 'APP', CUENTA_PEN_2)).not.toThrow();
+    expect(() => verificarTitular(CLIENTE_2, 'APP', BILLETERA_USD_2)).not.toThrow();
   });
 
-  test('CLIENTE por APP a cuenta ajena o inexistente → SIN_PERMISO', () => {
-    esperarSinPermiso(() => verificarTitular(CLIENTE_1, 'APP', CUENTA_USD));
+  test('CLIENTE por APP a cuenta PEN o billetera USD ajena, o inexistente → SIN_PERMISO', () => {
+    esperarSinPermiso(() => verificarTitular(CLIENTE_1, 'APP', CUENTA_PEN_2));
+    esperarSinPermiso(() => verificarTitular(CLIENTE_1, 'APP', BILLETERA_USD_2));
     esperarSinPermiso(() => verificarTitular(CLIENTE_2, 'APP', CUENTA_PEN));
+    esperarSinPermiso(() => verificarTitular(CLIENTE_2, 'APP', BILLETERA_USD_1));
     esperarSinPermiso(() => verificarTitular(CLIENTE_1, 'APP', null));
   });
 
-  test('AGENTE y CAJERO pueden depositar a cualquier cuenta', () => {
-    expect(() => verificarTitular(AGENTE_1, 'AGENTE', CUENTA_PEN)).not.toThrow();
-    expect(() => verificarTitular(AGENTE_1, 'AGENTE', CUENTA_USD)).not.toThrow();
-    expect(() => verificarTitular(CAJERO_1, 'VENTANILLA', CUENTA_PEN)).not.toThrow();
-    expect(() => verificarTitular(CAJERO_1, 'VENTANILLA', CUENTA_USD)).not.toThrow();
+  test('AGENTE y CAJERO pueden depositar a cualquier cuenta PEN o billetera USD', () => {
+    for (const cuenta of [CUENTA_PEN, CUENTA_PEN_2, BILLETERA_USD_1, BILLETERA_USD_2]) {
+      expect(() => verificarTitular(AGENTE_1, 'AGENTE', cuenta)).not.toThrow();
+      expect(() => verificarTitular(CAJERO_1, 'VENTANILLA', cuenta)).not.toThrow();
+    }
   });
 });
 
 describe('esTitular (SEG-R12)', () => {
   test('true solo si la cuenta existe y su titularId es el id del usuario', () => {
     expect(esTitular(CLIENTE_1, CUENTA_PEN)).toBe(true);
-    expect(esTitular(CLIENTE_2, CUENTA_USD)).toBe(true);
-    expect(esTitular(CLIENTE_1, CUENTA_USD)).toBe(false);
+    expect(esTitular(CLIENTE_1, BILLETERA_USD_1)).toBe(true);
+    expect(esTitular(CLIENTE_2, CUENTA_PEN_2)).toBe(true);
+    expect(esTitular(CLIENTE_2, BILLETERA_USD_2)).toBe(true);
+    expect(esTitular(CLIENTE_1, CUENTA_PEN_2)).toBe(false);
+    expect(esTitular(CLIENTE_1, BILLETERA_USD_2)).toBe(false);
     expect(esTitular(AGENTE_1, CUENTA_PEN)).toBe(false);
+    expect(esTitular(AGENTE_1, BILLETERA_USD_1)).toBe(false);
   });
 
   test('cuenta null/undefined, titularId null o usuario sin id → false (siempre booleano)', () => {
