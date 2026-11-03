@@ -237,7 +237,7 @@
         "Sin la feature, un depósito en otra moneda se rechaza con 422",
         "CM-T01 a CM-T08 pasan; CD-T07/T08 dejan de ser test.todo"
       ],
-      "status": "reabierta",
+      "status": "done",
       "retrabajo": true
     },
     {

@@ -946,74 +946,69 @@ Umbral 80 % cumplido en `src/core/` y `src/modules/`.
 
 ## SPEC-11
 
-- **Tester** · 2026-11-02 · Feature 11 (`conversion-moneda`).
-- **Ejecución:** `bash init.sh` completo, en primer plano, con PostgreSQL real (`deposito_test`) →
-  **`EXIT=0`**. `[OK] SPEC-11: todos sus casos tienen prueba` · alcance OK (162 archivos) ·
-  `Test Suites: 21 passed, 21 total` · `Tests: 340 passed, 340 total` (0 todo) ·
+- **Tester** · 2026-11-03 · Feature 11 (`conversion-moneda`) · **retrabajo** por SPEC-02 §4 v2.0
+  (rama `inte_biUsd`). La spec 11 no cambió; sin desarrollador; `src/` sin tocar.
+- **Ejecución:** `bash init.sh` completo, con PostgreSQL real (`deposito_test`) → **`EXIT=0`**.
+  `[OK] SPEC-11: todos sus casos tienen prueba` · alcance OK (178 archivos) ·
+  `Test Suites: 23 passed, 23 total` · `Tests: 406 passed, 406 total` (0 todo) ·
   `[OK] Todas las pruebas en verde (unitarias + integración)`.
-- **SQL nuevo:** `tests/setup/globalSetup.js` (proyecto `integration`) hace
-  `DROP SCHEMA public CASCADE` y aplica todos los `db/*.sql` en orden alfabético, así que
-  `db/11-conversion-moneda.sql` se aplica tras `10-limites-canal.sql` (y `depositos` ya existe por
-  `00-core.sql`). Comprobado por prueba: existe `idx_tipos_cambio_par`, y todas las pruebas de
-  integración insertan en `tipos_cambio` / `conversiones_deposito`. Sin parches ni bloqueos.
-- `limpiar()` vacía `tipos_cambio` (y las 2 filas de ejemplo de §4): cada prueba carga sus propios
-  tipos con `vigente_desde = now() + <interval>` (`-1 day` ayer, `-1 minute` hoy, `1 day` mañana),
-  con los UUID de ejemplo de §4 (`…0001`, `…0002`) y `…0003`.
+- **Qué cambió en el retrabajo** (actualizado/eliminado, no solo añadido):
+  - SPEC-02 v2.0: `0011-0123-000002` es PEN (`usr-cliente-2`); la cuenta en dólares es la billetera
+    USD `11111111-1111-4111-8111-111111111111` (`usr-cliente-1`), atendida por Billetera USD
+    (`POST /api/v1/depositos/usd`). Ya no queda ninguna referencia a `0011-0123-000002` como USD en
+    las pruebas de SPEC-11 (la prueba de integración PEN → `0011-0123-000002` USD de la versión
+    1.0 del reporte ya no existe; la sustituyen las de la billetera USD de abajo).
+  - **Eliminado** el `test.todo('CM-R03 PEN → USD a billetera 22222222-… …')` de
+    `tests/integration/conversion-moneda/conversion.test.js` (esperaba el retrabajo de SPEC-07,
+    ya terminado) y **convertido** en prueba real con la billetera `11111111-…` (titular
+    `usr-cliente-1`, el usuario que §6 manda usar en integración) y los helpers USD
+    (`billeteraUsdExiste`, `acreditaUsdOk`, `acreditaUsdFalla`).
+  - Unitarias (`tests/unit/conversion-moneda/conversion.test.js`): `contexto(db, 'USD')` arma ahora
+    la cuenta con `numero = 11111111-…` (antes reutilizaba `0011-0123-456789` con moneda USD, dato
+    que no existe en §4); el caso CM-R05 PEN→USD usa `cuentaDestino = 11111111-…` y comprueba además
+    que el SELECT recibe `['PEN','USD']`.
 - Integración: `crearApp({ manifest })` por prueba con `registrar-deposito` y `consultar-deposito`
-  activos, `limites-por-canal` y `alerta-uif` inactivas y `conversion-moneda` **activa** o
-  **inactiva** según el caso; `usr-cliente-1`, canal APP, cuenta `0011-0123-456789` (PEN) como pide
-  §6; billetera con los helpers de nock. `afterEach` espera a que se estabilice
-  `auditoria_depositos` antes del `TRUNCATE`. Líneas ≤ 100 caracteres en los archivos nuevos.
-- Unitarias: `db` / `tx` falsos (`{ query: jest.fn() }`); sin `jest.mock` de módulos.
+  activos, `limites-por-canal` y `alerta-uif` inactivas y `conversion-moneda` activa o inactiva según
+  el caso; `usr-cliente-1`, canal APP. `afterEach` espera a que se estabilice `auditoria_depositos`
+  antes del `TRUNCATE` de `limpiar()`. Cada prueba carga sus tipos (`limpiar()` vacía `tipos_cambio`).
 
 ### Casos cubiertos
 
 | Caso | Archivo | Qué comprueba |
 |---|---|---|
-| CM-T01 | `tests/integration/conversion-moneda/conversion.test.js` | `100.00` USD, tipo 3.7500 → 201 COMPLETADO con `extensiones["conversion-moneda"] = { monedaCuenta: "PEN", tipoCambio: "3.7500", montoAcreditado: "375.00" }`; billetera recibe `monto "375.00"`, `moneda "PEN"`; `depositos`: `100.00` USD, `monto_acreditar 375.00` PEN; `conversiones_deposito`: 1 fila con `tipo_cambio_id`, `3.7500`, `monto_final 375.00` |
-| CM-T02 | idem | `150.00` PEN (con tipos USD→PEN y PEN→USD cargados) → 201, `extensiones: {}`, 0 filas de conversión, billetera recibe `150.00` PEN |
-| CM-T03 | idem | USD sin tipo cargado → 422 `MONEDA_NO_SOPORTADA`; 0 depósitos; 0 conversiones; sin acreditación |
-| CM-T04 | idem | Tipos de ayer (3.7000) y de hoy (3.7500) → usa 3.7500 (`tipo_cambio_id` = el de hoy), billetera recibe `375.00` |
-| CM-T05 | idem | Solo un tipo con `vigente_desde` mañana → 422 `MONEDA_NO_SOPORTADA`; nada guardado |
+| CM-T01 | `tests/integration/conversion-moneda/conversion.test.js` | `100.00` USD a `0011-0123-456789`, tipo 3.7500 → 201 COMPLETADO con la extensión `{ PEN, "3.7500", "375.00" }`; billetera PEN recibe `375.00` PEN; fila de depósito y de `conversiones_deposito` (`monto_final 375.00`) |
+| CM-T02 | idem | `150.00` PEN → 201, `extensiones: {}`, 0 filas de conversión, billetera recibe `150.00` PEN |
+| CM-T03 | idem | USD sin tipo cargado → 422 `MONEDA_NO_SOPORTADA`; nada guardado; sin acreditación |
+| CM-T04 | idem | Tipos de ayer (3.70) y de hoy (3.75) → usa 3.75 (`tipo_cambio_id` = el de hoy) |
+| CM-T05 | idem | Solo tipo con `vigente_desde` mañana → 422 `MONEDA_NO_SOPORTADA`; nada guardado |
 | CM-T06 | `tests/unit/conversion-moneda/conversion.test.js` | `convertir("10.01","3.7555")` → `"37.59"`; `convertir("1.00","3.7550")` → `"3.76"` |
-| CM-T07 | `tests/integration/conversion-moneda/conversion.test.js` | Feature `inactivo` **con** tipo USD→PEN cargado (para que el 422 se deba a la inactividad) → 422 `MONEDA_NO_SOPORTADA`; nada guardado; sin acreditación |
-| CM-T08 | idem | Billetera 500 tras convertir → 502 `BILLETERA_NO_DISPONIBLE`; billetera recibió `375.00` PEN; depósito `FALLIDO`; la fila de `conversiones_deposito` sigue con `monto_final 375.00` |
+| CM-T07 | `tests/integration/conversion-moneda/conversion.test.js` | Feature `inactivo` con tipo cargado: USD a cuenta PEN → 422; y (nueva) PEN a la billetera USD `11111111-…` con tipo PEN→USD → 422; nada guardado; sin acreditación |
+| CM-T08 | idem | Billetera PEN 500 tras convertir → 502; depósito FALLIDO; la fila de conversión se queda |
 
-Pruebas adicionales por regla (todas ✅):
+Pruebas adicionales por regla (todas verdes):
 
-- **CM-R01** (unit): misma moneda → devuelve el mismo objeto, no consulta la BD, `privado` intacto.
-- **CM-R02/R03** (unit): el SELECT recibe `['USD','PEN']` (origen = moneda del depósito) y filtra
-  `vigente_desde <= now()` ordenando `DESC`. (integración): PEN → cuenta USD `0011-0123-000002`
-  (`usr-cliente-2`) usa la fila PEN→USD 0.26 → `26.00` USD; con solo la fila PEN→USD, un depósito USD
-  a cuenta PEN → 422 (no invierte el sentido).
-- **CM-R04** (unit): acepta `Decimal`; `0.02 × 0.25 = 0.005` → `"0.01"` (HALF_UP); `0.01 × 0.26` →
-  `"0.00"`; `99999999.99 × 3.7555` → `"375549999.96"` (sin pérdida de precisión).
-- **CM-R05** (unit): `montoAcreditar` es `Decimal` `375.00`, `monedaAcreditar` PEN, `monto`/`moneda`
-  originales intactos, extensión de §5 y `contexto.privado.tipoCambioId`; PEN→USD 0.26 → `39.00`.
-- **CM-R06** (unit): sin tipo → devuelve el mismo objeto sin lanzar ni fijar `tipoCambioId`.
-- **CM-R07** (unit): `persistir` hace el INSERT con la `tx` recibida y los parámetros
-  `[depositoId, tipoCambioId, 'PEN', '3.7500', '375.00']` (no usa `contexto.db`); sin extensión → no
-  hace nada.
-- **CM-R08** (unit): `leerExtension` mapea la fila al bloque de §5 y `null` sin fila. (integración):
-  POST convertido y luego `GET /api/v1/depositos/{id}` → `extensiones["conversion-moneda"]` presente.
-- **CM-R10** (integración): `db/11-conversion-moneda.sql` crea `idx_tipos_cambio_par`.
-- `index.js` cumple el contrato de transformador de SPEC-06 §4.
-
-### Casos de otras specs desbloqueados
-
-- **CD-T07** y **CD-T08** (SPEC-08) en `tests/integration/consultar-deposito/consultar.test.js`:
-  pruebas reales y verdes (ver `## SPEC-08`).
-- Nota de `progress/impl_11.md` sobre pruebas que esperan 422 `MONEDA_NO_SOPORTADA`: RD-T10 usa un
-  manifest a medida con `conversion-moneda` inactiva, y además `limpiar()` vacía `tipos_cambio`;
-  sigue verde.
+- **CM-R01, CM-R02/R03, CM-R04, CM-R05, CM-R06, CM-R07, CM-R08** (unit): como antes; CM-R05 PEN→USD
+  ahora con la billetera `11111111-…` (`150.00` PEN × 0.26 → `39.00` USD, SELECT `['PEN','USD']`).
+- **CM-R03 PEN → USD** (integración, nueva, sustituye al `test.todo`): con filas USD→PEN 3.75 y
+  PEN→USD 0.26 cargadas, `150.00` PEN a `11111111-…` → 201 con extensión
+  `{ monedaCuenta: "USD", tipoCambio: "0.2600", montoAcreditado: "39.00" }`; Billetera USD recibe
+  `Idempotency-Key = id`, `cliente_id usr-cliente-1`, `cuenta_destino_id 11111111-…`,
+  `monto "39.00"`, `moneda "USD"`, `metodo_origen TRANSFERENCIA`, `referencia_externa = id`;
+  billetera PEN no llamada; fila `monto_acreditar 39.00 USD`; conversión con `tipo_cambio_id …0002`.
+- **CM-R03** (integración, nueva): solo fila USD→PEN y depósito PEN a la billetera USD → 422 (no
+  invierte); y la existente: solo fila PEN→USD y depósito USD a cuenta PEN → 422.
+- **CM-R09** (integración, nueva): PEN → USD y Billetera USD 500 → 502; depósito FALLIDO con
+  `39.00` USD; la fila de conversión se queda.
+- **CM-R08** (integración): GET `/api/v1/depositos/{id}` trae la extensión.
+- **CM-R10** (integración): existe `idx_tipos_cambio_par`.
 
 ### Casos en `test.todo`
 
-Ninguno.
+Ninguno (el de CM-R03 PEN→USD se convirtió en prueba real).
 
 ### Pruebas fallidas
 
-Ninguna.
+Ninguna. No hizo falta ningún cambio en `src/`.
 
 ### Cobertura (`src/core/` y `src/modules/`)
 
@@ -1021,25 +1016,22 @@ Ninguna.
 -----------------------------|---------|----------|---------|---------|
 File                         | % Stmts | % Branch | % Funcs | % Lines |
 -----------------------------|---------|----------|---------|---------|
-All files                    |   99.54 |    95.15 |   99.17 |   99.83 |
- core                        |   98.93 |    93.85 |   97.14 |   99.42 |
- core/clients                |     100 |    92.85 |     100 |     100 |
+All files                    |   99.72 |     95.1 |   99.23 |   99.84 |
+ core                        |   99.46 |    94.73 |   97.14 |   99.42 |
+ core/clients                |     100 |    95.12 |     100 |     100 |
  core/middlewares            |     100 |    94.87 |     100 |     100 |
  core/repositories           |     100 |     87.5 |     100 |     100 |
  core/tareas                 |     100 |      100 |     100 |     100 |
+ modules/alerta-uif          |     100 |       80 |     100 |     100 |
  modules/consultar-deposito  |     100 |      100 |     100 |     100 |
  modules/conversion-moneda   |     100 |      100 |     100 |     100 |
-  index.js                   |     100 |      100 |     100 |     100 |
-  repository.js              |     100 |      100 |     100 |     100 |
-  service.js                 |     100 |      100 |     100 |     100 |
- modules/historial-depositos |   98.68 |     91.3 |     100 |     100 |
+ modules/historial-depositos |    98.7 |     91.3 |     100 |     100 |
  modules/limites-por-canal   |     100 |      100 |     100 |     100 |
  modules/registrar-deposito  |     100 |      100 |     100 |     100 |
 -----------------------------|---------|----------|---------|---------|
 ```
 
-Umbral 80 % cumplido en `src/core/` y `src/modules/` (`conversion-moneda` 100 % en las cuatro
-métricas).
+Umbral 80 % cumplido en `src/core/` y `src/modules/`.
 
 ## SPEC-12
 

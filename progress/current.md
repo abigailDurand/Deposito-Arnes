@@ -84,3 +84,5 @@ SPEC-01 (dev → revisor). Luego SPEC-02 con `Busti:codigo/` como referencia.
 - SPEC-09 → `in_progress` (dev HD-R01 → tester → revisor).
 - SPEC-09 dev (retrabajo): schema.js HD-R01 PEN o UUID minúsculas. init.sh 396 + 1 todo verde. Ver `progress/impl_09.md`. Siguiente: tester.
 - SPEC-09: dev → tester → revisor APROBADO (`progress/review_09.md`). Leader: init.sh 402 + 1 todo.
+- SPEC-11 → `in_progress` (solo pruebas: tester → revisor).
+- SPEC-11: tester → revisor APROBADO (`progress/review_11.md`). Leader: init.sh 406/406, sin todo.

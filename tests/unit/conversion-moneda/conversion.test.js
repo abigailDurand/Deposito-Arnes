@@ -5,7 +5,9 @@ const Decimal = require('decimal.js');
 const service = require('../../../src/modules/conversion-moneda/service');
 const modulo = require('../../../src/modules/conversion-moneda');
 
+// SPEC-02 §4 v2.0: cuenta PEN de la billetera PEN y billetera USD de usr-cliente-1.
 const CUENTA = '0011-0123-456789';
+const WALLET_USD = '11111111-1111-4111-8111-111111111111';
 const ID = '7f1c2e9a-0b1d-4c5e-9f00-123456789abc';
 const TIPO_USD_PEN = { id: '00000000-0000-0000-0000-000000000001', valor: '3.7500' };
 
@@ -31,10 +33,12 @@ function dbFalso(filas = []) {
   return { query: jest.fn(async () => ({ rows: filas })) };
 }
 
+// La cuenta del contexto según la moneda: PEN → 0011-0123-456789; USD → billetera 11111111-….
 function contexto(db, monedaCuenta = 'PEN') {
+  const numero = monedaCuenta === 'USD' ? WALLET_USD : CUENTA;
   return {
     usuario: { id: 'usr-cliente-1', roles: ['CLIENTE'] },
-    cuenta: { numero: CUENTA, estado: 'ACTIVA', moneda: monedaCuenta, titularId: 'usr-cliente-1' },
+    cuenta: { numero, estado: 'ACTIVA', moneda: monedaCuenta, titularId: 'usr-cliente-1' },
     correlationId: 'cm-unit',
     db,
     privado: {},
@@ -103,14 +107,19 @@ describe('SPEC-11 conversion-moneda: reglas', () => {
       expect(ctx.privado.tipoCambioId).toBe(TIPO_USD_PEN.id);
     });
 
-  test('CM-R05 PEN → USD con 0.26: 150.00 PEN → 39.00 USD', async () => {
+  test('CM-R05 PEN → USD con 0.26 a la billetera 11111111-…: 150.00 PEN → 39.00 USD', async () => {
     const ctx = contexto(
       dbFalso([{ id: '00000000-0000-0000-0000-000000000002', valor: '0.2600' }]),
       'USD',
     );
 
-    const resultado = await modulo.ejecutar(deposito('150.00', 'PEN'), ctx);
+    const resultado = await modulo.ejecutar(
+      deposito('150.00', 'PEN', { cuentaDestino: WALLET_USD }),
+      ctx,
+    );
 
+    expect(ctx.db.query.mock.calls[0][1]).toEqual(['PEN', 'USD']);
+    expect(resultado.cuentaDestino).toBe(WALLET_USD);
     expect(resultado.montoAcreditar.toFixed(2)).toBe('39.00');
     expect(resultado.monedaAcreditar).toBe('USD');
     expect(resultado.extensiones['conversion-moneda'])
