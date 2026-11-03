@@ -67,3 +67,7 @@ SPEC-01 (dev → revisor). Luego SPEC-02 con `Busti:codigo/` como referencia.
   - Plan: (1) `billeteraClient.js` con enrutamiento INT-R10 (UUID minúsculas sin `/i`) y USD INT-R04..R07;
     (2) mock con rutas PEN + USD (INT-R09, datos §4: `000002` PEN, billeteras `1111…`/`2222…`/`9999…`/`8888…`);
     (3) helpers nock PEN + USD de §2; (4) `node -e require` + `init.sh`; (5) `progress/impl_02.md`.
+- SPEC-02 dev (retrabajo): `billeteraClient.js` (PEN+USD, INT-R10 UUID minúsculas), mock con rutas USD y datos §4 nuevos,
+  helpers nock PEN+USD. `init.sh` completo: 354/357; 3 fallas esperadas por `000002` ya PEN (INT-T01, verificarTitular
+  en registrar.test.js, CM-R03 en conversion.test.js) + pruebas obsoletas listadas en `progress/impl_02.md`. Siguiente: tester.
+- SPEC-02: dev → tester → revisor RECHAZADO (deadlock preexistente en registrar.test.js) → tester corrigió → revisor APROBADO (`progress/review_02.md`). Leader: init.sh 379 + 1 todo.

@@ -107,67 +107,131 @@ All files             |   98.73 |    94.44 |    92.3 |   98.63 |
 
 ## SPEC-02
 
-- **Agente:** tester · **Fecha:** 2026-10-30 · **Feature:** 2 (`integraciones`)
-- **Ejecución:** `bash init.sh` completo → `EXIT=0` (PostgreSQL real arriba).
-  `[OK] SPEC-02: todos sus casos tienen prueba`. `Test Suites: 5 passed · Tests: 1 todo, 60 passed, 61 total`.
-- Ningún caso de SPEC-02 necesita PostgreSQL: todo es unitario con nock (`nock.disableNetConnect()`,
-  `nock.cleanAll()` + `nock.abortPendingRequests()` en cada prueba) usando los helpers de
-  `tests/helpers/billetera.js`. El mock Express (`mocks/billetera/`) es para pruebas manuales: sin pruebas automáticas.
-- **Timeouts sin esperar 5 s:** el cliente se carga en `jest.isolateModules` con
-  `BILLETERA_TIMEOUT_MS=100` solo en el `process.env` de esa carga (se restaura enseguida); nock
-  responde con demora de 1000 ms. Se comprueba que el error llega antes de la demora. No se tocó `config.js` ni `tests/setup/`.
+- **Agente:** tester · **Fecha:** 2026-11-03 · **Feature:** 2 (`integraciones`) · **Retrabajo** spec v2.0 (Billetera USD), rama `inte_biUsd`.
+- **Ejecución:** `bash init.sh` completo con PostgreSQL, 2 corridas seguidas, las dos en verde → `[OK] SPEC-02: todos sus casos tienen prueba`,
+  `Test Suites: 23 passed · Tests: 1 todo, 379 passed, 380 total`, `[OK] Entorno listo` (ver "Pruebas fallidas").
+- Todo SPEC-02 es unitario con nock (`nock.disableNetConnect()`, `cleanAll` + `abortPendingRequests` y
+  `jest.restoreAllMocks()` en cada prueba), con los helpers PEN y USD de `tests/helpers/billetera.js`.
+  `BILLETERA_URL` (`http://billetera.test`) y `BILLETERA_USD_URL` (`http://billetera-usd.test`) son hosts distintos en `tests/setup/env.js`, así que nock distingue a qué billetera va cada llamada.
+- **Variables de entorno distintas sin tocar `config.js` ni `tests/setup/`:** `clienteCon({...})` carga el
+  cliente dentro de `jest.isolateModules` con el `process.env` cambiado solo durante la carga y luego lo restaura
+  (`BILLETERA_TIMEOUT_MS=100` para los timeouts con nock retrasado 1000 ms; `BILLETERA_USD_TOKEN` para INT-T15).
+- El mock Express (`mocks/billetera/`) es para pruebas manuales: no tiene pruebas automáticas (§6.1).
 
 ### Casos cubiertos (`tests/unit/integraciones/billeteraClient.test.js`)
 
-| Caso | Resultado |
-|---|---|
-| INT-T01 `consultarCuenta` 200 → `{ numero, estado, moneda, titularId }` exacto de §4 (+ cuentas `000003` BLOQUEADA y `000002` USD) | ✅ |
-| INT-T02 404 → `null` | ✅ |
-| INT-T03 500 → `ErrorApp` `BILLETERA_NO_DISPONIBLE` (502) | ✅ |
-| INT-T03 timeout → `BILLETERA_NO_DISPONIBLE` | ✅ |
-| INT-T04 `acreditar` 201 → resuelve `undefined` | ✅ |
-| INT-T04 `acreditar` 409 → resuelve `undefined` | ✅ |
-| INT-T05 400 y 500 → `BILLETERA_NO_DISPONIBLE`; `scope.peticiones` = 1 y un segundo interceptor idéntico queda sin usar (sin reintento) | ✅ |
-| INT-T05 timeout → `BILLETERA_NO_DISPONIBLE`; 1 sola petición (evento `request` de nock) y el interceptor de reintento sin usar | ✅ |
-| INT-T06 consultar y acreditar llevan `Authorization: Bearer token-de-prueba` y `X-Correlation-Id` (+ también en respuestas 404 y 500) | ✅ |
-| INT-T07 `monto: Decimal(150)` → body `{ depositoId, monto: "150.00", moneda: "PEN", concepto: "DEPOSITO" }` | ✅ |
+| Caso | Qué se comprueba | Resultado |
+|---|---|---|
+| INT-T01 | PEN 200 → `{ numero, estado, moneda, titularId }` exacto; además `000002` → ACTIVA **PEN** `usr-cliente-2` (dato nuevo de §4) y `000003` BLOQUEADA | ✅ |
+| INT-T02 | PEN 404 → `null` | ✅ |
+| INT-T03 | PEN 500 y timeout → `ErrorApp` `BILLETERA_NO_DISPONIBLE` (502) | ✅ |
+| INT-T04 | PEN `acreditar` 201 y 409 → `undefined` | ✅ |
+| INT-T05 | PEN 400, 500 y timeout → `BILLETERA_NO_DISPONIBLE`; 1 sola petición, el interceptor de reintento queda sin usar | ✅ |
+| INT-T06 | PEN: `Authorization: Bearer token-de-prueba` + `X-Correlation-Id` (también en 404 y 500) | ✅ |
+| INT-T07 | PEN `Decimal(150)` → body exacto `{ depositoId, monto: "150.00", moneda: "PEN", concepto: "DEPOSITO" }` | ✅ |
+| INT-T08 | USD 200 → exactamente `{ numero: id, estado: "ACTIVA", moneda: "USD", titularId: user_id }` para `11111111-…` (`usr-cliente-1`) y `22222222-…` (`usr-cliente-2`); sin `balance`/`nombre`; espías en todos los niveles del logger: ni `350.75` ni `Cliente Uno` se loguean | ✅ |
+| INT-T09 | USD 404 → `null`; 500 y timeout → `BILLETERA_NO_DISPONIBLE` | ✅ |
+| INT-T10 | USD 201 `COMPLETADO` → resuelve con `Idempotency-Key` = `depositoId`; 200 replay `COMPLETADO` → resuelve, misma clave y **body idéntico** al de la primera llamada (INT-R06) | ✅ |
+| INT-T11 | USD 409 `IDEMPOTENCY_CONFLICT` → `BILLETERA_NO_DISPONIBLE` y `logger.error` 1 vez con `{ correlationId, status: 409 }`; 201 `PENDIENTE` → `BILLETERA_NO_DISPONIBLE` | ✅ |
+| INT-T12 | USD 400, 500 (un `test.each` por status, cada uno con nock limpio) y timeout → `BILLETERA_NO_DISPONIBLE`; 1 sola petición, el interceptor de reintento queda sin usar | ✅ |
+| INT-T13 | USD `Decimal(150)` → body exacto `{ cliente_id, cuenta_destino_id, monto: "150.00", moneda: "USD", metodo_origen, referencia_externa: depositoId }`, sin `concepto`; VENTANILLA→EFECTIVO, AGENTE→EFECTIVO, APP→TRANSFERENCIA con `cliente_id` = `usuarioId` | ✅ |
+| INT-T14 | `0011-0123-456789` → consulta y crédito solo a PEN (interceptores comodín GET/POST en la URL USD sin usar); UUID → solo a USD (comodines en la URL PEN sin usar) | ✅ |
+| INT-T15 | Sin `BILLETERA_USD_TOKEN` (`config.billeteraUsd.token === null`) → consulta y crédito USD sin `Authorization`; con token → `Bearer token-usd-de-prueba` y la PEN sigue con `BILLETERA_TOKEN`; `X-Correlation-Id` siempre (también en 404 y 500) | ✅ |
 
-Pruebas extra (justificadas por reglas de SPEC-02), todas ✅:
+Pruebas extra (reglas de SPEC-02 v2.0), todas ✅:
 
-- INT-R04: consulta con 400 → error; 200 con cuerpo no objeto → error; error de red (`ECONNREFUSED`) → error.
-- INT-R05: `acreditar` con 200 → resuelve.
-- INT-R07: montos límite `"0.01"` → `"0.01"` y `Decimal("10.5")` → `"10.50"` (cuenta USD de §4); `concepto` siempre `DEPOSITO`.
+- INT-R11: consulta PEN con 400, con 200 y cuerpo no objeto y con error de red → error.
+- INT-R12: `acreditar` PEN con 200 → resuelve; montos límite `"0.01"` y `Decimal("10.5")` → `"10.50"` (a `000002`, ahora PEN).
+- INT-R04: consulta USD con 400 y con 200 y cuerpo no objeto → error.
+- INT-R05: error de red al acreditar USD → error.
+
+**No se prueba un UUID en mayúsculas.** INT-R10 dice "UUID → Billetera USD" sin definir mayúsculas; el cliente
+(`RE_UUID` sin `/i`) lo manda a PEN. No se fija ninguna de las dos conductas en una prueba.
+
+### Pruebas actualizadas o eliminadas por el contrato nuevo (`0011-0123-000002` pasó de USD a PEN)
+
+| Prueba | Antes | Ahora |
+|---|---|---|
+| `tests/unit/integraciones/billeteraClient.test.js` · INT-T01 (cuentas de §4) | `000002` → `moneda: 'USD'` (fallaba) | `000002` → ACTIVA PEN `usr-cliente-2` |
+| mismo archivo · prueba de montos límite | `000002` como cuenta USD por la ruta PEN (`concepto` en USD) | `000002` PEN, body exacto; renombrada INT-R07 → INT-R12 |
+| mismo archivo · pruebas extra | ids de reglas viejas (INT-R04/R05 para PEN) | renombradas a INT-R11/INT-R12 (PEN) |
+| `tests/integration/registrar-deposito/registrar.test.js` · `verificarTitular …` | cajero por VENTANILLA a `000002` en USD → 201 (fallaba con 422) | cajero por VENTANILLA a `000002` (PEN, cuenta **ajena**) → 201 PEN; la constante `CUENTA_USD` pasa a `CUENTA_AJENA`. El caso con cuenta USD (UUID) le corresponde al retrabajo de SPEC-07 (RD-T13..T18) |
+| `tests/integration/conversion-moneda/conversion.test.js` · `CM-R03 PEN → USD usa la fila PEN→USD` | depósito PEN a `000002` como cuenta USD (fallaba: sin conversión) | **`test.todo`**: el schema de SPEC-07 todavía solo acepta `0000-0000-000000` (`src/modules/registrar-deposito/schema.js:7`), así que no se puede hacer un depósito a una billetera USD hasta el retrabajo de SPEC-07. CM-R05 PEN→USD sigue cubierto en `tests/unit/conversion-moneda/conversion.test.js`. Se quitó la constante `CUENTA_USD`, que ya no se usaba |
+
+No se tocaron las pruebas que siguen en verde pero quedaron obsoletas en otras specs (lista en `progress/impl_02.md`):
+consultar-deposito, historial-depositos, seguridad/permisos, alerta-uif y la constante `CUENTA_USD` de esas
+suites. Se retrabajan con su spec.
 
 ### Casos en `test.todo`
 
-Ninguno de SPEC-02. (Sigue PRY-T01 de SPEC-00, espera SPEC-06.) No había `test.todo` previos que esperaran SPEC-02.
+- Ninguno de SPEC-02.
+- Nuevo: `CM-R03 PEN → USD a billetera 22222222-…` (SPEC-11, `tests/integration/conversion-moneda/conversion.test.js`), **espera el retrabajo de SPEC-07** (`cuentaDestino` UUID).
 
 ### Pruebas fallidas
 
-Ninguna.
+Ninguna en la corrida final de `bash init.sh`.
 
-### Cobertura (`src/core/` y `src/modules/`)
+**Deadlock de `registrar.test.js` corregido (cambio requerido en `progress/review_02.md`).** La auditoría
+escribe en `res.on('finish')` (`src/core/middlewares/auditoria.js:74-76`) después de que supertest recibe la respuesta;
+ese INSERT chocaba con el `TRUNCATE … CASCADE` de `limpiar()` (`tests/helpers/db.js:17`) del `beforeEach`
+siguiente (`error: deadlock detected`, 3/3 corridas en la revisión). Arreglo solo en
+`tests/integration/registrar-deposito/registrar.test.js` (no se tocaron `src/` ni los helpers): `afterEach` ahora es
+`async` y espera a `esperarAuditoria()`, igual que `conversion.test.js` pero más estricto. Espera a que el pool de la
+app (`src/core/db`, el mismo que usa la auditoría) no tenga clientes en uso ni en espera
+(`waitingCount === 0 && totalCount === idleCount`) **y** a que el conteo de `auditoria_depositos` no cambie, durante
+2 comprobaciones seguidas (pausas de 25 ms, tope de 2,5 s).
+
+Comprobación: `npx jest tests/integration/registrar-deposito --runInBand` 3 de 3 en verde (22/22), y `bash init.sh`
+completo 2 veces seguidas, las dos en verde:
 
 ```
-----------------------|---------|----------|---------|---------|-------------------
-File                  | % Stmts | % Branch | % Funcs | % Lines | Uncovered Line #s
-----------------------|---------|----------|---------|---------|-------------------
-All files             |   99.05 |       94 |      95 |   98.97 |
- core                 |   98.41 |    91.66 |    90.9 |    98.3 |
-  db.js               |   94.73 |      100 |      50 |   94.73 | 14
-  depositoMapper.js   |     100 |    83.33 |     100 |     100 | 24
-  errores.js          |     100 |    92.85 |     100 |     100 | 62
-  logger.js           |     100 |      100 |     100 |     100 |
- core/clients         |     100 |    92.85 |     100 |     100 |
-  billeteraClient.js  |     100 |    92.85 |     100 |     100 | 45
- core/middlewares     |     100 |      100 |     100 |     100 |
-  manejadorErrores.js |     100 |      100 |     100 |     100 |
-----------------------|---------|----------|---------|---------|-------------------
+=== corrida 1 (exit 0)
+[OK]    specs-v2/ intacto (15 archivos)
+[OK]    feature_list.json válido (13 features: pending=0 in_progress=1 done=6 blocked=0 reabierta=6)
+[OK]    SPEC-02: todos sus casos tienen prueba
+[WARN]  SPEC-07 (reabierta) aún sin prueba: RD-T13, RD-T14, RD-T15, RD-T16, RD-T17, RD-T18
+[WARN]  SPEC-08 (reabierta) aún sin prueba: CD-T10, CD-T11, CD-T12, CD-T13
+[WARN]  SPEC-09 (reabierta) aún sin prueba: HD-T09, HD-T10, HD-T11, HD-T12
+[OK]    Alcance de archivos correcto (178 archivos revisados)
+Test Suites: 23 passed, 23 total
+Tests:       1 todo, 379 passed, 380 total
+[OK]    Todas las pruebas en verde (unitarias + integración)
+[OK]    Entorno listo. Puedes empezar a trabajar.
+
+=== corrida 2 (exit 0)
+(mismas líneas [OK]/[WARN] que la corrida 1)
+Test Suites: 23 passed, 23 total
+Tests:       1 todo, 379 passed, 380 total
+[OK]    Todas las pruebas en verde (unitarias + integración)
+[OK]    Entorno listo. Puedes empezar a trabajar.
 ```
 
-- `src/core/`: ≥ 90 % en todas las métricas (umbral 80 % cumplido). `billeteraClient.js` pasa de 0 % a 100 % líneas.
-- Sin cubrir en `billeteraClient.js:45`: rama `err.message` cuando un error de axios no trae `code` (solo afecta al detalle del log).
-- `src/modules/`: sin código todavía.
+Las demás suites de integración que hacen peticiones auditadas y no esperan a la auditoría podrían tener el mismo
+problema en teoría (no se vio en estas corridas). La solución general sería esperar en `limpiar()`
+(`tests/helpers/db.js`), pero el tester no puede editar los helpers; queda como sugerencia para el líder.
+
+### Cobertura (`src/core/` y `src/modules/`, corrida final de `init.sh`)
+
+```
+File                         | % Stmts | % Branch | % Funcs | % Lines | Uncovered Line #s
+All files                    |   99.72 |     95.1 |   99.23 |   99.84 |
+ core                        |   99.46 |    94.73 |   97.14 |   99.42 |
+ core/clients                |     100 |    95.12 |     100 |     100 |
+  billeteraClient.js         |     100 |    95.12 |     100 |     100 | 69,145
+ core/middlewares            |     100 |    94.87 |     100 |     100 |
+ core/repositories           |     100 |     87.5 |     100 |     100 |
+ core/tareas                 |     100 |      100 |     100 |     100 |
+ modules/alerta-uif          |     100 |       80 |     100 |     100 |
+ modules/consultar-deposito  |     100 |      100 |     100 |     100 |
+ modules/conversion-moneda   |     100 |      100 |     100 |     100 |
+ modules/historial-depositos |   98.68 |     91.3 |     100 |     100 |
+ modules/limites-por-canal   |     100 |      100 |     100 |     100 |
+ modules/registrar-deposito  |     100 |      100 |     100 |     100 |
+```
+
+- Umbral de 80 % cumplido en todas las métricas. Las ramas sin cubrir de `billeteraClient.js` solo cambian
+  el detalle del log: `:69` (`err.code || err.message` cuando el error no trae `code`) y `:145` (respuesta USD
+  sin cuerpo objeto).
 
 ## SPEC-03
 

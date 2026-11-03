@@ -11,7 +11,6 @@ const { token } = require('../../helpers/tokens');
 
 const RUTA = '/api/v1/depositos';
 const CUENTA = '0011-0123-456789';
-const CUENTA_USD = '0011-0123-000002';
 const BODY = { cuentaDestino: CUENTA, monto: '100.00', moneda: 'USD', canal: 'APP' };
 const TIPO_1 = '00000000-0000-0000-0000-000000000001';
 const TIPO_2 = '00000000-0000-0000-0000-000000000002';
@@ -259,27 +258,12 @@ describe('SPEC-11 conversion-moneda: casos', () => {
 });
 
 describe('SPEC-11 conversion-moneda: reglas con la BD real', () => {
-  test('CM-R03 PEN → USD usa la fila PEN→USD (0.26), no la inversa de USD→PEN', async () => {
-    const app = crearApp({ manifest: manifest() });
-    await cargarTipo({ id: TIPO_1, valor: '3.7500', desplazamiento: '-1 day' });
-    await cargarTipo({
-      id: TIPO_2, origen: 'PEN', destino: 'USD', valor: '0.2600', desplazamiento: '-1 day',
-    });
-    billetera.cuentaActiva(CUENTA_USD);
-    const credito = billetera.acreditaOk(CUENTA_USD);
-    const body = { cuentaDestino: CUENTA_USD, monto: '100.00', moneda: 'PEN', canal: 'APP' };
-
-    const res = await post(app, { body, usuario: 'usr-cliente-2' });
-
-    expect(res.status).toBe(201);
-    expect(res.body.extensiones).toEqual({
-      'conversion-moneda': { monedaCuenta: 'USD', tipoCambio: '0.2600', montoAcreditado: '26.00' },
-    });
-    expect(credito.peticiones[0].body).toMatchObject({ monto: '26.00', moneda: 'USD' });
-    expect(await conversiones()).toEqual([
-      expect.objectContaining({ tipo_cambio_id: TIPO_2, monto_final: '26.00' }),
-    ]);
-  });
+  // SPEC-02 v2.0: las cuentas USD son billeteras UUID (11111111-…/22222222-…) y 0011-0123-000002
+  // pasó a PEN. El schema de SPEC-07 aún solo acepta 0000-0000-000000, así que un depósito PEN a
+  // una cuenta USD no es expresable hasta el retrabajo de SPEC-07 (CM-R05 PEN→USD sigue cubierto en
+  // tests/unit/conversion-moneda/conversion.test.js).
+  test.todo('CM-R03 PEN → USD a billetera 22222222-… usa la fila PEN→USD (0.26), no la inversa '
+    + '(espera el retrabajo de SPEC-07: cuentaDestino UUID)');
 
   test('CM-R03 solo hay fila PEN→USD y el depósito es USD a cuenta PEN → 422 (no invierte)',
     async () => {

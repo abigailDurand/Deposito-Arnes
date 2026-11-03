@@ -62,7 +62,7 @@
         "Cambiar al billetera-service real solo requiere cambiar BILLETERA_URL y BILLETERA_TOKEN",
         "INT-T01 a INT-T07 pasan"
       ],
-      "status": "in_progress",
+      "status": "done",
       "retrabajo": true
     },
     {

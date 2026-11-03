@@ -1,91 +1,83 @@
-# Implementación SPEC-02 — integraciones (feature 2)
+# impl_02 — SPEC-02 integraciones (RETRABAJO Billetera USD, spec v2.0)
 
-**Agente:** desarrolladorback · **Fecha:** 2026-10-30 · **Estado:** `in_progress` (lista para el tester)
+> Retrabajo: sustituye al `impl_02.md` anterior. Rama `inte_biUsd`, 2026-11-03.
+> Referencia usada: `Busti:codigo/` (billeteraClient, mock, helpers), verificada regla por regla.
+> No se portó nada de `codigo/` fuera de §2 (en particular, NO `registrar-deposito/service.js`).
 
-## Archivos creados (todos del §2 de SPEC-02)
+## Archivos
 
-- `src/core/clients/billeteraClient.js`: `consultarCuenta(numero, correlationId)`, `acreditar(datos, correlationId)`.
-- `mocks/billetera/server.js`: mock Express en memoria, puerto 4000.
-- `mocks/billetera/Dockerfile`: `node:22-alpine`, instala `express@4.21.2` exacto (el contexto de build del compose es `./mocks/billetera`, sin acceso al `package.json` raíz).
-- `tests/helpers/billetera.js`: helpers nock `cuentaActiva`, `cuentaNoExiste`, `consultaFalla`, `acreditaOk`, `acreditaFalla`, `acreditaLento`, `acreditaYaExiste` (+ export `CUENTAS`).
-- `tests/helpers/tokens.js`: `token(usuario, { exp, aud, clave, alg })` (+ export `USUARIOS`).
-- `scripts/generar-claves-dev.js`: par RSA en `.dev-keys/` (`privada.pem`, `publica.pem`); imprime la línea `JWT_PUBLIC_KEY="..."` para el `.env`.
-- `scripts/generar-token.js`: `node scripts/generar-token.js usr-agente-1`.
-
-No se modificó ningún archivo fuera del §2 (`docker-compose.yml`, `src/config.js`, `tests/setup/*` intactos).
-`tests/unit/integraciones/billeteraClient.test.js` es del tester: no se creó.
-Solo `feature_list.json` (feature 2 → `in_progress`) y `progress/current.md` por protocolo.
+| Archivo (§2) | Acción |
+|---|---|
+| `src/core/clients/billeteraClient.js` | MODIFICADO: dos instancias axios (PEN y USD), enrutamiento INT-R10, rutas USD INT-R04/R05/R07 |
+| `mocks/billetera/server.js` | MODIFICADO: rutas USD + datos §4 nuevos (`000002` PEN, billeteras `1111…`/`2222…`/`9999…`/`8888…`) |
+| `tests/helpers/billetera.js` | MODIFICADO: helpers PEN (misma firma que antes, ahora sobre `config.billetera.url`) + 9 helpers USD de §2 |
+| `mocks/billetera/Dockerfile` | Sin cambios (no hace falta: el mock sigue siendo Express 4.21.2 en un solo `server.js`) |
+| `tests/helpers/tokens.js`, `scripts/generar-claves-dev.js`, `scripts/generar-token.js` | Sin cambios (idénticos a `Busti:codigo/`; v2.0 no los cambia) |
+| `tests/unit/integraciones/billeteraClient.test.js` | No tocado (es del tester) |
 
 ## Reglas
 
-- **INT-R01** · El cliente solo usa HTTP (axios); no toca ninguna BD ajena.
-- **INT-R02** · `cabeceras()` añade `Authorization: Bearer <config.billetera.token>` y `X-Correlation-Id` en ambas llamadas (comprobado con nock: `Bearer token-de-prueba`, `abc`).
-- **INT-R03** · `axios.create({ timeout: config.billetera.timeoutMs })` compartido por las dos llamadas.
-- **INT-R04** · `consultarCuenta`: 200 → `{ numero, estado, moneda, titularId }` (solo esos campos); 404 → `null`; otro status, cuerpo no objeto, timeout o error de red → `ErrorApp('BILLETERA_NO_DISPONIBLE')`.
-- **INT-R05** · `acreditar({ depositoId, cuenta, monto, moneda })`: 200/201/409 → `undefined`; cualquier otro status o timeout → `ErrorApp('BILLETERA_NO_DISPONIBLE')`.
-- **INT-R06** · Una sola `http.request` por llamada, sin bucles ni interceptores de reintento (nock: 1 petición en 400, 500 y timeout).
-- **INT-R07** · `monto: new Decimal(monto).toFixed(2)` (`Decimal(150)` → `"150.00"`); `concepto: 'DEPOSITO'` constante.
-- **INT-R08** · Nada llama a usuario-service; los tokens se firman localmente (helper y script) y SPEC-03 los validará con la clave pública.
-- **INT-R09** · El mock guarda los `depositoId` acreditados en un `Set`; repetir → 409.
-- **BILLETERA_URL** · Solo `billeteraClient.js` llama a billetera, vía `config.billetera.url`. Los helpers nock interceptan `config.billetera.url` sin escribir URL. Los únicos literales de URL de billetera fuera del cliente pertenecen a SPEC-00: `.env.example`, `docker-compose.yml`, `tests/setup/env.js` y `tests/core/proyecto.test.js` (`http://billetera.test`). Aviso para el revisor, que por §6 solo espera `.env.example`.
+- **INT-R01** · Solo HTTP vía axios; ningún acceso a BD ajena.
+- **INT-R02** · PEN: `Authorization: Bearer config.billetera.token` + `X-Correlation-Id` siempre (`cabecerasPen`). USD: `X-Correlation-Id` siempre; `Authorization: Bearer config.billeteraUsd.token` solo si el token es truthy (`config.js` lo deja `null` si falta) (`cabecerasUsd`).
+- **INT-R03** · Ambas instancias axios usan `timeout: config.billetera.timeoutMs` (`BILLETERA_TIMEOUT_MS`); timeout/error de red → `BILLETERA_NO_DISPONIBLE` en `llamar()`.
+- **INT-R04** · `GET /api/v1/billetera/wallets/{id}`: 200 → `{ numero: id, estado: 'ACTIVA', moneda: data.moneda, titularId: data.user_id }` (balance/nombre no se devuelven ni se loguean); 404 → `null`; otro → `BILLETERA_NO_DISPONIBLE`.
+- **INT-R05** · `POST /api/v1/depositos/usd` con `Idempotency-Key: depositoId`. 201/200 con `estado === 'COMPLETADO'` → resuelve; 409 → `logger.error` + `BILLETERA_NO_DISPONIBLE`; 201/200 con otro estado, otro status o timeout → `BILLETERA_NO_DISPONIBLE` (`logger.warn`).
+- **INT-R06** · Una sola petición por llamada, sin reintentos (ambas billeteras). El body USD se arma solo con datos del depósito, así un reintento manual reenvía la misma clave con body idéntico.
+- **INT-R07** · Body USD: `cliente_id = usuarioId`, `cuenta_destino_id = cuenta`, `monto = new Decimal(monto).toFixed(2)`, `moneda: 'USD'`, `metodo_origen` por tabla `METODO_ORIGEN` (VENTANILLA/AGENTE → EFECTIVO, APP → TRANSFERENCIA), `referencia_externa = depositoId`; sin `concepto`.
+- **INT-R08** · No aplica al cliente (no se llama a usuario-service).
+- **INT-R09** · Mock: PEN guarda `depositoId` en un `Set` → 409 si se repite. USD guarda cada `Idempotency-Key` con su body canónico (los 6 campos del contrato en orden fijo, para no depender del orden de claves del JSON) y el `Deposito` devuelto: misma clave + mismo body → 200 con el mismo `Deposito` (replay); misma clave + otro body → 409 `IDEMPOTENCY_CONFLICT`; si no → 201 `estado: 'COMPLETADO'`. Billetera `9999…` → 500 y `8888…` → espera 6 s antes de acreditar (§4). El replay se evalúa antes de la falla simulada.
+- **INT-R10** · `RE_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/` (sin `/i`: solo minúsculas). UUID → USD; el resto → PEN. Solo vive en `billeteraClient.js`; la API pública sigue siendo `consultarCuenta(numero, correlationId)` / `acreditar(datos, correlationId)`.
+- **INT-R11** · `GET /api/v1/cuentas/{numero}` igual que antes (200 → `{ numero, estado, moneda, titularId }`; 404 → `null`; otro → error).
+- **INT-R12** · `POST /api/v1/cuentas/{numero}/creditos` con `{ depositoId, monto: 'x.xx', moneda, concepto: 'DEPOSITO' }`; 200/201/409 → resuelve.
+- **Datos §4** · Mock y helpers: `0011-0123-000002` ahora ACTIVA **PEN** `usr-cliente-2`; billeteras USD `11111111-…` (`usr-cliente-1`), `22222222-…` (`usr-cliente-2`); especiales del mock `99999999-…` (500) y `88888888-…` (6 s).
+- **PRY-R06** · Montos con `Decimal(...).toFixed(2)`; ningún `Number`/`parseFloat` sobre montos.
+- **PRY-R09** · URLs solo vía `config` (grep en `src/`: ninguna URL fuera de `config.js`).
+- **PRY-R10** · Logs con `enmascararCuenta(cuenta)`; nunca `balance`, `nombre` ni el token.
 
 ## Decisiones
 
-- **Mock (§4/§5):** datos de §4 literales. Cuentas especiales: `0011-0123-999999` → 500 al acreditar (no registra el `depositoId`); `0011-0123-888888` → espera 6 s y luego aplica la lógica normal (201/409). §4 no da titular a las cuentas especiales: el mock devuelve `titularId: null` en vez de inventar uno (en ellas solo pueden depositar AGENTE o CAJERO). Cuenta inexistente → 404; body sin `depositoId` o sin `monto` string → 400. §5 no define cuerpos para 201/409/404: el 201 devuelve el crédito recibido y el resto `{ mensaje }`. El mock no valida `Authorization` (autenticación entre servicios [POR ACORDAR]; §5 no define 401).
-- **Helpers nock:** cada uno devuelve el scope de nock con `scope.peticiones` (`[{ headers, body }]`) para INT-T05/T06/T07. Número por defecto `0011-0123-456789`; uno fuera de §4 lanza error. `cuentaActiva(numero)` responde 200 con los datos reales de §4 (para `0011-0123-000003` devuelve `BLOQUEADA`, útil en RD-T06). `consultaFalla(numero, { status = 500, demora })` cubre 500 y timeout; `acreditaFalla(numero, { status = 500 })` cubre 400 y 500; `acreditaLento(numero, { demora = 6000 })` imita la cuenta lenta del mock (supera `BILLETERA_TIMEOUT_MS` = 5000 de `env.js`); `acreditaOk(numero, { status = 201 })` acepta también 200.
-- **Tokens:** payload de §5 `{ sub, roles, iss, aud, exp }` con `noTimestamp` (sin `iat`, como en §5). `iss`/`aud` por defecto salen de `config.jwt`. `exp` en segundos epoch (por defecto ahora + 1 h); `clave` es un PEM privado (por defecto `tests/.tmp/privada.pem`); `alg: 'none'` arma a mano un token sin firma. Comprobado con `jwt.verify`: válido OK; `exp` pasado → `TokenExpiredError`; `aud` distinto, otra clave o `none` → `JsonWebTokenError`.
-- **generar-token.js:** `iss`/`aud` vienen de `src/config.js` (PRY-R09). Como `config` exige las 4 variables obligatorias, el script carga `.env` con `process.loadEnvFile` si existe; sin `.env` termina con un mensaje claro (`cp .env.example .env`). Los roles salen de `USUARIOS` de `tests/helpers/tokens.js`, la única fuente de los usuarios de §4. Validez del token de desarrollo: 1 h. `generar-claves-dev.js` no sobrescribe un par ya existente.
+- **Cuenta que no es UUID en minúsculas → billetera PEN** (incluido un UUID en mayúsculas). La spec solo define los dos formatos; el formato lo valida quien llama (RD-R02 / HD-R01). Así el comportamiento PEN previo no cambia.
+- **Respuestas USD con formato del contrato** (`Billetera_USD_openapi.yaml`): errores con `ApiError` (`status, code, message, correlation_id, timestamp`) y acreditaciones con `Deposito` (`deposito_id, cliente_id, cuenta_destino_id, monto, moneda, estado, movimiento_saldo_id, creado_en, completado_en`), en mock y helpers. Busti devolvía el body de vuelta, que no es el contrato.
+- **`nombre`/`balance` de los datos de prueba**: no los fija §4. Para `11111111-…` uso los del ejemplo de §5 (`"Cliente Uno"`, `"350.75"`); para el resto, `nombre: null` (el contrato lo permite) y `balance: "0.00"`. Busti tenía valores inventados (`Cliente Dos`, `100.00`, `Falla`, `Lenta`).
+- **Billeteras especiales del mock sin titular** (`user_id: null`), igual que las cuentas PEN especiales (`titularId: null`): §4 no les asigna titular. Busti les ponía `usr-cliente-1`, que no está en la spec.
+- Mock USD: además, 400 sin `Idempotency-Key` o sin campos obligatorios y 404 si `cuenta_destino_id` no existe (respuestas declaradas en el contrato).
+- **Firmas de helpers**: PEN sin cambios (`fn(numero = '0011-0123-456789', opciones)`); USD de consulta `fn(id = '11111111-…', opciones)`; USD de acreditación sin id (la ruta `POST /api/v1/depositos/usd` no lo lleva): `acreditaUsdOk()`, `acreditaUsdReplay()`, `acreditaUsdConflicto()`, `acreditaUsdPendiente()`, `acreditaUsdFalla({ status = 500 })`, `acreditaUsdLento({ demora = 6000 })`. Todas devuelven el scope de nock con `peticiones` (`{ headers, body }`). Se exportan también `CUENTAS` y `BILLETERAS_USD`.
 
-## Verificación manual
+## Verificación
 
-- `node -e "require(...)"` del cliente y de los helpers: cargan OK.
-- Script de humo con nock (fuera del repo): los casos INT-T01..T07 se comportan como pide §6. 200 → cuenta; 404 → `null`; 500/timeout → `BILLETERA_NO_DISPONIBLE`; 201/409 resuelven; 400/500/timeout → error con 1 sola petición; headers presentes; body con `"150.00"`.
-- `docker compose build billetera-mock` y `docker compose up -d billetera-mock` funcionan con el compose existente (`express` 4.21.2 en la imagen). curl:
-  ```
-  GET  0011-0123-456789          → 200 {"numero":"0011-0123-456789","estado":"ACTIVA","moneda":"PEN","titularId":"usr-cliente-1"}
-  GET  0011-0123-000003          → 200 ... "estado":"BLOQUEADA"
-  GET  0000-0000-000000          → 404
-  POST 0011-0123-456789/creditos → 201 ; mismo depositoId → 409
-  POST 0011-0123-999999/creditos → 500
-  POST 0011-0123-888888/creditos → 201 en 6.0 s
-  POST .../creditos con {}       → 400
-  ```
-  Al terminar: mock detenido (`docker compose stop billetera-mock`) y `db` arriba (healthy).
-- `generar-claves-dev.js` + `generar-token.js usr-agente-1` (con las variables obligatorias en el entorno): token verificado con `.dev-keys/publica.pem`; `iss=usuario-service`, `aud=banco-api`, `roles=["AGENTE"]`.
+- `node -e "require('./tests/setup/env.js'); require('./src/core/clients/billeteraClient'); require('./tests/helpers/billetera')"` → carga OK; `node --check mocks/billetera/server.js` → OK.
+- Prueba manual con los helpers (script en scratchpad, no en el repo): consulta USD sin `balance`/`nombre` y sin `Authorization`; acreditar USD lleva `Idempotency-Key` y el body exacto de INT-R07 (`"150.00"`, `TRANSFERENCIA` para APP); 409 y `PENDIENTE` → `BILLETERA_NO_DISPONIBLE`; `000002` → PEN; UUID en mayúsculas → va a PEN.
+- **El mock no se probó levantado**: el permiso para arrancar y parar un proceso en el puerto 4000 fue denegado. Queda pendiente probarlo a mano con `docker compose up billetera-mock`.
 
-### `bash init.sh --rapido`
+### `bash init.sh` (completo, con PostgreSQL)
 
 ```
+[OK]    Alcance de archivos correcto (178 archivos revisados)
 [OK]    specs-v2/ intacto (15 archivos)
-[OK]    feature_list.json válido (13 features: pending=10 in_progress=1 done=2 blocked=0)
-[OK]    SPEC-00: todos sus casos tienen prueba (todo: PRY-T01)
-[OK]    SPEC-01: todos sus casos tienen prueba
-[WARN]  SPEC-02 (en curso) aún sin prueba: INT-T01, INT-T02, INT-T03, INT-T04, INT-T05, INT-T06, INT-T07
-[OK]    Alcance de archivos correcto (74 archivos revisados)
-Tests:       1 todo, 37 passed, 38 total
-[OK]    Pruebas unitarias en verde (modo --rapido: integración NO ejecutada)
-[OK]    Entorno listo (verificación rápida). Para cerrar una feature corre 'bash init.sh' completo.
-EXIT=0
+[OK]    feature_list.json válido (13 features: pending=0 in_progress=1 done=6 blocked=0 reabierta=6)
+[WARN]  SPEC-02 (en curso) aún sin prueba: INT-T08..INT-T15
+[WARN]  SPEC-07 (reabierta) aún sin prueba: RD-T13..RD-T18
+[WARN]  SPEC-08 (reabierta) aún sin prueba: CD-T10..CD-T13
+[WARN]  SPEC-09 (reabierta) aún sin prueba: HD-T09..HD-T12
+Test Suites: 3 failed, 20 passed, 23 total
+Tests:       3 failed, 354 passed, 357 total
+[FAIL]  Hay pruebas rotas
 ```
 
-### `bash init.sh` (completo)
+Las 3 fallas esperadas vienen del contrato anterior (`0011-0123-000002` como USD). **Son del tester; no las toqué**:
 
-```
- core/clients         |       0 |        0 |       0 |       0 |
-  billeteraClient.js  |       0 |        0 |       0 |       0 | 3-76
-Jest: "./src/core/" coverage threshold for statements (80%) not met: 73.58%
-Jest: "./src/core/" coverage threshold for branches (80%) not met: 68%
-Jest: "./src/core/" coverage threshold for lines (80%) not met: 73.46%
-Jest: "./src/core/" coverage threshold for functions (80%) not met: 60%
-Tests:       1 todo, 42 passed, 43 total
-[FAIL]  Hay pruebas rotas (¿está PostgreSQL arriba? 'docker compose up -d db')
-EXIT=1
-```
+1. `tests/unit/integraciones/billeteraClient.test.js` › `consultarCuenta › INT-T01 (cuentas BLOQUEADA y USD de §4) → devuelve su estado y moneda reales`: espera `moneda: 'USD'` para `000002`; ahora es PEN.
+2. `tests/integration/registrar-deposito/registrar.test.js` › `SPEC-07 registrar-deposito: reglas › verificarTitular: usr-cliente-1 por APP a su cuenta → 201; usr-cajero-1 por VENTANILLA a 0011-0123-000002 (USD) → 201`: 422 (moneda USD ≠ cuenta PEN).
+3. `tests/integration/conversion-moneda/conversion.test.js` › `SPEC-11 conversion-moneda: reglas con la BD real › CM-R03 PEN → USD usa la fila PEN→USD (0.26), no la inversa de USD→PEN`: sin conversión porque `000002` ya es PEN.
 
-Única causa: `billeteraClient.js` aún no tiene las pruebas INT-T del tester, así que la cobertura de
-`src/core/` queda bajo el 80 %. Ninguna prueba falla (42 verdes + 1 todo).
+Pruebas que **pasan pero quedaron obsoletas** (usan `0011-0123-000002` como cuenta USD; deben pasar a `22222222-2222-4222-8222-222222222222` con los helpers USD):
 
-## Notas para tester y revisor
+- `tests/integration/consultar-deposito/consultar.test.js` (`CUENTA_USD`, l. 20; `CD-R02 usr-cliente-2 ve un depósito a su cuenta USD 0011-0123-000002`).
+- `tests/integration/conversion-moneda/conversion.test.js` (`CUENTA_USD`, l. 14).
+- `tests/integration/historial-depositos/historial.test.js` (`CUENTA_USD`, l. 20).
+- `tests/integration/registrar-deposito/registrar.test.js` (`CUENTA_USD`, l. 18).
+- `tests/unit/seguridad/permisos.test.js` (`CUENTA_USD` con `moneda: 'USD'`, l. 18; SPEC-03).
+- `tests/unit/alerta-uif/alerta.test.js` (l. 75, depósito USD a `000002`).
+- `tests/integration/seguridad/seguridad.test.js` (SEG-T06 usa `000002` como cuenta ajena: sigue siendo válido, ahora PEN).
 
-- El `docker compose up --build` completo que arrastra review_00 todavía no puede comprobar `deposito-service`, porque `src/server.js` llega con SPEC-06. El mock sí levanta.
-- Para el timeout, `acreditaLento` y `consultaFalla({ demora })` usan el delay real de nock; con `BILLETERA_TIMEOUT_MS=5000` cada prueba tarda unos 5 s, salvo que se simule `config` o se pase una demora menor.
+Además, los casos nuevos INT-T08..INT-T15 están sin prueba (tester).

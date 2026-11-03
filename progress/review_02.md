@@ -1,124 +1,132 @@
-# Review — SPEC-02 integraciones
+# Review — SPEC-02 integraciones (RETRABAJO Billetera USD, spec v2.0)
 
-**Veredicto:** APROBADO CON OBSERVACIONES
+**Veredicto:** APROBADO
 
-**Revisor:** revisor · **Fecha:** 2026-10-30 · **Feature:** 2 (`integraciones`)
+**Revisor:** revisor · **Fecha:** 2026-11-03 (2ª revisión) · **Feature:** 2 (`integraciones`, `retrabajo: true`) · rama `inte_biUsd`
+Sustituye al review anterior (2026-10-30, APROBADO CON OBSERVACIONES sobre la spec v1).
+
+## Segunda revisión (2026-11-03)
+
+El único cambio requerido de la 1ª revisión (deadlock en `registrar.test.js`) está corregido:
+
+- `tests/integration/registrar-deposito/registrar.test.js:95-107` — `esperarAuditoria()` espera (pausas de 25 ms,
+  tope 100 iteraciones) a que el pool de la app (`src/core/db`, `:8`, el mismo que usa `auditoria.js` en
+  `res.on('finish')`) quede sin clientes en uso ni en espera (`waitingCount === 0 && totalCount === idleCount`) **y**
+  a que `count(*)` de `auditoria_depositos` sea estable en 2 comprobaciones seguidas. `afterEach` (`:109`) es `async`
+  y la espera antes de que el `beforeEach` siguiente haga el `TRUNCATE`. Condición basada en estado real del pool, no
+  en un `sleep` fijo: correcto y determinista en la práctica.
+- Ajuste coherente con SPEC-02 v2.0 §4 en la misma suite: `CUENTA_USD` → `CUENTA_AJENA` (`0011-0123-000002` es PEN de
+  `usr-cliente-2`); la prueba `verificarTitular` (`:427-447`) ahora espera `moneda: 'PEN'`. No se tocó `src/` ni helpers.
+- Verificación: `bash init.sh` completo 3 veces (1 en la exploración + 2 seguidas) → verde, `23 passed`, `1 todo,
+  379 passed, 380 total`; la suite sola `npx jest tests/integration/registrar-deposito --runInBand` 3/3 en verde
+  (22/22), sin `deadlock`.
+- Observación (no bloquea, ninguna regla de spec): si se agota el tope de 100 iteraciones la función retorna sin
+  fallar; y otras suites auditadas sin espera podrían sufrir el mismo choque. Solución general sugerida por el tester
+  (esperar en `tests/helpers/db.js` `limpiar()`): queda para el líder.
+
+El resto de la 1ª revisión se mantiene sin cambios.
+
+## 1ª revisión (histórico)
+
+**Motivo único del rechazo (1ª revisión, ya resuelto):** `bash init.sh` completo con PostgreSQL termina **rojo** en 3 de 3 corridas
+(regla dura: no se aprueba con init.sh rojo). El código y las pruebas de SPEC-02 cumplen la spec; lo que falla
+es una prueba de SPEC-07 por un deadlock de la BD (ver "Cambios requeridos"). No es un defecto de
+`billeteraClient.js`: el mismo fallo se reproduce 3/3 con el árbol de `HEAD` (a70dd04, sin este retrabajo).
 
 ## Reglas
 
-### Prioridad §6 (revisor)
-- [x] **INT-R06** — `src/core/clients/billeteraClient.js:40-47` hace una única `http.request` por llamada; el `catch` transforma el error en `BILLETERA_NO_DISPONIBLE` sin repetir. `acreditar` (`:66-74`) no tiene bucle, ni interceptores (`grep interceptors|retry` sin resultados en `src/`), ni `axios-retry` en `package.json`. Las pruebas INT-T05 (`billeteraClient.test.js:171-207`) registran un segundo interceptor idéntico y comprueban que no se usa (400, 500 y timeout; en el timeout cuentan los eventos `request` = 1 tras un margen extra).
-- [x] **URL de billetera solo en `billeteraClient.js` y `.env.example`** — `billeteraClient.js:13` no tiene literal: usa `config.billetera.url` (`src/config.js:44`, PRY-R09). Grep de `http://`, `:4000` y `billetera-mock` en todo el repo (sin `node_modules`/`coverage`):
-  - `.env.example:26` `BILLETERA_URL=http://localhost:4000`. Permitido por §6.
-  - `docker-compose.yml:31` `BILLETERA_URL: http://billetera-mock:4000` y `:21` el puerto `4000:4000`. Aceptable: SPEC-00 §2 define el compose con el servicio `billetera-mock` (SPEC-02), y SPEC-02 §2 fija el mock en el puerto 4000. Es la variable de entorno que inyecta el compose, no una URL en el código. Además el archivo es de SPEC-00 y SPEC-02 no lo modificó.
-  - `tests/setup/env.js:21` y `tests/core/proyecto.test.js:12,71` usan `http://billetera.test`: es un host ficticio de pruebas que pertenece a SPEC-00 (aprobado en review_00), no apunta a billetera y nock lo intercepta. Aceptable.
-  - `mocks/billetera/server.js:6` `PUERTO = 4000`: es un número de puerto, no una URL; lo define §2.
-  - `tests/helpers/billetera.js:185` intercepta `config.billetera.url` sin escribir ninguna URL.
-  Cambiar al billetera-service real solo requiere `BILLETERA_URL` y `BILLETERA_TOKEN` (criterio de aceptación cumplido).
-
-### Resto de reglas INT
-- [x] INT-R01 — solo HTTP con axios; ningún acceso a BD ajena.
-- [x] INT-R02 — `billeteraClient.js:21-26` `Authorization: Bearer ${config.billetera.token}` + `X-Correlation-Id` en ambas llamadas (`:42`). Lo comprueba INT-T06 (también en respuestas 404/500).
-- [x] INT-R03 — `axios.create({ timeout: config.billetera.timeoutMs })` (`:12-16`), compartido por las dos funciones. Probado con `BILLETERA_TIMEOUT_MS=100` aislado.
-- [x] INT-R04 — `:55-60` 404 → `null`; 200 → `{ numero, estado, moneda, titularId }` (solo esos campos); otro status, cuerpo no objeto, timeout o error de red → `ErrorApp('BILLETERA_NO_DISPONIBLE')`.
-- [x] INT-R05 — `:72` 200/201/409 → `undefined`; cualquier otro → `BILLETERA_NO_DISPONIBLE` (`:73`).
-- [x] INT-R07 — `:70` `monto: new Decimal(monto).toFixed(2)`, `concepto: CONCEPTO` (`'DEPOSITO'`, `:18`). Probado con `Decimal(150)` → `"150.00"`, `"0.01"` y `Decimal("10.5")` → `"10.50"`.
-- [x] INT-R08 — nada llama a usuario-service; los tokens se firman localmente.
-- [x] INT-R09 — `mocks/billetera/server.js:23,53-57` `Set` de `depositoId`; repetir → 409. Verificado a mano (ver abajo).
-
-### Reglas de proyecto
-- [x] PRY-R03 — solo `src/core/clients/` hace HTTP hacia otro servicio.
-- [x] PRY-R06/R07 — sin `Number(`/`parseFloat` en `src/`, `mocks/`, `scripts/`, `tests/helpers/`.
-- [x] PRY-R09 — token y URL solo vía `config.js`. `scripts/generar-token.js:24-26` lee `iss`/`aud` de `config`.
-- [x] PRY-R10 — `billeteraClient.js:33-36` registra `enmascararCuenta(numero)` y nunca el token ni los headers.
-- [x] PRY-R11 — mock fiel al contrato propuesto de §5 [POR ACORDAR]; usa solo los datos de §4.
-- [x] PRY-R12 — `specs-v2/` intacto (hash OK).
-- [x] Sin `console.log` (el mock usa `process.stdout.write` para un único mensaje de arranque).
-
-### Archivos y nombres de §2
-- [x] `billeteraClient.js` exporta `consultarCuenta(numero, correlationId)` y `acreditar(datos, correlationId)`.
-- [x] `tests/helpers/billetera.js` exporta exactamente `cuentaActiva`, `cuentaNoExiste`, `consultaFalla`, `acreditaOk`, `acreditaFalla`, `acreditaLento`, `acreditaYaExiste` (+ `CUENTAS`).
-- [x] `tests/helpers/tokens.js` — `token(usuario, { exp, aud, clave, alg })` firma con `tests/.tmp/privada.pem` (`:19`). Verificado con `tests/.tmp/publica.pem`: el token válido pasa `jwt.verify` (RS256, `iss=usuario-service`, `aud=banco-api`, `roles=["AGENTE"]`); `exp:1` → `TokenExpiredError`; `aud:'otro'` → `audience invalid`; `alg:'none'` → `signature is required`.
-- [x] Los scripts no imprimen la clave privada: `generar-claves-dev.js:20` solo la escribe a `.dev-keys/privada.pem` (modo 0600) y en stdout imprime la pública (`:32-33`); `generar-token.js:47` imprime solo el token firmado. `.dev-keys/` y `tests/.tmp/` están en `.gitignore`.
-- [x] El mock (`server.js` + `Dockerfile`, `express@4.21.2` exacto, puerto 4000) respeta §5.
-
-## Verificación manual del mock (arrastre de SPEC-00)
-
-`docker compose up -d --build db billetera-mock`: la imagen se construye y los dos servicios arrancan (`db` healthy). curl:
-
-```
-GET  0011-0123-456789            → 200 {"numero":"0011-0123-456789","estado":"ACTIVA","moneda":"PEN","titularId":"usr-cliente-1"}
-GET  0011-0123-000002            → 200 ... "estado":"ACTIVA","moneda":"USD","titularId":"usr-cliente-2"
-GET  0011-0123-000003            → 200 ... "estado":"BLOQUEADA","moneda":"PEN","titularId":"usr-cliente-1"
-GET  0011-0123-999999            → 200 ... "estado":"ACTIVA","moneda":"PEN","titularId":null
-GET  0000-0000-000000            → 404
-POST 0011-0123-456789/creditos   → 201 (0.01 s)
-POST mismo depositoId            → 409  (INT-R09)
-POST 0011-0123-999999/creditos   → 500  (cuenta especial §4)
-POST 0011-0123-888888/creditos   → 201 en 6.005 s (cuenta especial §4)
-POST cuenta inexistente          → 404
-POST body {}                     → 400
-```
-
-Al terminar: `docker compose stop billetera-mock`; solo `db` queda arriba (healthy).
-
-**Pendiente para el revisor de SPEC-06:** `deposito-service` todavía no puede arrancar (su `src/server.js` llega en SPEC-06). Este revisor debe correr `docker compose up --build` con los 3 servicios y comprobar `GET /health` (criterio de SPEC-00). Esto no es motivo de rechazo en SPEC-02.
+- [x] PRY-R01..R03 (capas) — `billeteraClient.js` vive en `src/core/clients/`, sin nombres de features; ningún módulo de `src/modules/` conoce rutas ni URLs de billetera (grep `wallets|depositos/usd|billeteraUsd` en `src/`: solo `config.js` y el cliente).
+- [x] PRY-R06 — montos con `new Decimal(monto).toFixed(2)` (`billeteraClient.js:97`, `:131`); sin `Number(`/`parseFloat` en cliente, mock ni helpers.
+- [x] PRY-R09 — URLs: `config.billetera.url` / `config.billeteraUsd.url` solo en `billeteraClient.js:14,20`; literales `http://` solo en `.env.example` y `docker-compose.yml` (SPEC-00). Sin `console.log`.
+- [x] PRY-R10 — logs con `enmascararCuenta(cuenta)`; `consultarCuentaUsd` (`:105-118`) no loguea ni devuelve `balance`/`nombre`; token nunca logueado.
+- [x] PRY-R12 — `specs-v2/` intacto (init.sh: 15 archivos).
+- [x] INT-R01 — solo HTTP vía axios.
+- [x] INT-R02 — PEN: `Authorization: Bearer BILLETERA_TOKEN` + `X-Correlation-Id` (`cabecerasPen`, `:43-48`); USD: `X-Correlation-Id` siempre y `Authorization` solo si `config.billeteraUsd.token` (`cabecerasUsd`, `:50-54`).
+- [x] INT-R03 — ambas instancias con `timeout: config.billetera.timeoutMs` (`:15`, `:21`).
+- [x] INT-R04 — `GET /api/v1/billetera/wallets/{id}`; 200 → `{ numero: id, estado: 'ACTIVA', moneda, titularId: user_id }` (`:117`); 404 → `null`; otro → `BILLETERA_NO_DISPONIBLE`.
+- [x] INT-R05 — `Idempotency-Key: depositoId` (`:126`); 409 → `logger.error` + `BILLETERA_NO_DISPONIBLE` (`:136-144`); 201/200 solo con `estado === 'COMPLETADO'` (`:147`); resto → error.
+- [x] INT-R06 — `llamar()` (`:65-71`) hace una sola petición; sin `axios-retry` ni bucles. Body USD armado solo con datos del depósito (replay idéntico).
+- [x] INT-R07 — body exacto `cliente_id, cuenta_destino_id, monto, moneda: 'USD', metodo_origen, referencia_externa` (`:127-134`); tabla `METODO_ORIGEN` (`:32-36`) VENTANILLA/AGENTE → EFECTIVO, APP → TRANSFERENCIA; sin `concepto`.
+- [x] INT-R08 — no se llama a usuario-service.
+- [x] INT-R09 — mock: PEN `Set` de `depositoId` → 409 (`server.js:96-99`); USD `Map` clave → body canónico: mismo body → 200 replay, otro → 409 `IDEMPOTENCY_CONFLICT`, nuevo → 201 `COMPLETADO` (`:129-155`).
+- [x] INT-R10 — `RE_UUID` sin `/i` (`billeteraClient.js:30`), solo minúsculas; el enrutamiento vive solo en el cliente (`:157-165`), API pública sin cambios.
+- [x] INT-R11 / INT-R12 — PEN sin cambios de conducta: 200/404/otro; créditos 200/201/409 → resuelve, body `{ depositoId, monto, moneda, concepto: 'DEPOSITO' }`.
+- [x] Datos §4 — `0011-0123-000002` ACTIVA **PEN** `usr-cliente-2` en mock (`server.js:17`) y helpers (`billetera.js:12`); billeteras `1111…`/`2222…` con sus titulares; especiales `9999…` (500) y `8888…` (6 s) en el mock. Ningún dato inventado.
+- [x] Defectos conocidos de `Busti:codigo/` no arrastrados — regex UUID con `/i` (Busti `billeteraClient.js:25`) corregido; INT-T12 sí verifica 1 sola llamada; ninguna prueba usa `000002` como USD; no se portó `registrar-deposito/service.js` ni `armarContexto`/`montoValido`.
 
 ## Casos de prueba
-- [x] INT-T01 … INT-T07 (7/7 reales, en `tests/unit/integraciones/billeteraClient.test.js`). Comprueban valores concretos: cuerpo exacto, `null`, `codigo`/`status` 502, número de peticiones, headers y body. Hay pruebas extra para INT-R04 (400, cuerpo no objeto, ECONNREFUSED), INT-R05 (200) e INT-R07 (montos límite).
-- Ningún `test.todo` de SPEC-02.
+
+- [x] INT-T01 … INT-T15 (15/15 reales) en `tests/unit/integraciones/billeteraClient.test.js`, con aserciones concretas: `toEqual` exactos de la cuenta y del body, cabeceras por valor, `isDone()`/interceptor de reintento sin usar y conteo `recibidas === 1` (INT-T05/T12), espía de `logger.error` con `{ correlationId, status: 409 }` (INT-T11), espías en todos los niveles sin `350.75`/`Cliente Uno` (INT-T08), comodines en la otra billetera sin usar (INT-T14), cliente aislado con `BILLETERA_USD_TOKEN` (INT-T15).
+- [x] Pruebas obsoletas que fallaban con `000002` como USD: actualizadas (`registrar.test.js` verificarTitular → `CUENTA_AJENA` PEN) o pasadas a `test.todo` justificado (`conversion.test.js` CM-R03 PEN→USD, espera el retrabajo de SPEC-07). Las obsoletas en verde de SPEC-03/08/09/11/12 quedan para su retrabajo (no bloquean, según el líder).
 
 ## Checkpoints
-- C1: [x]  C2: [x] (1 feature `in_progress`, dependencias 0 y 1 `done`; `current.md` describe la sesión)  C3: [x] (specs intactas, alcance OK con 76 archivos)  C4: [x]  C5: [x] (`src/core/` 98.41 % stmts, 91.66 % branch; `billeteraClient.js` 100 % líneas; reporte completo)
 
-## Observaciones (no incumplen reglas de spec)
-1. `tests/helpers/billetera.js:8-12` — `CUENTAS` no incluye las cuentas especiales `0011-0123-999999` y `0011-0123-888888`, así que `cuentaActiva('0011-0123-999999')` lanza error. Hoy esos casos se simulan con `acreditaFalla`/`acreditaLento` sobre cuentas normales, lo cual es válido. Si SPEC-07 quiere usar las cuentas especiales con nock, tendrá que tenerlo en cuenta.
-2. `mocks/billetera/server.js:17-18` — §4 no define titular para las cuentas especiales y el mock devuelve `titularId: null` en vez de inventar uno (es correcto por PRY-R11/R12). Conviene llevarlo a la lista P1/P3 del README para acordarlo con el equipo de billetera.
-3. `scripts/generar-token.js:30` hace `require('../tests/helpers/tokens')` para leer `USUARIOS`: un script de desarrollo depende de un helper de pruebas. Funciona y evita duplicar los usuarios de §4, pero el acoplamiento es poco habitual.
-4. `billeteraClient.js:59-60` — un 200 con objeto sin los cuatro campos devuelve campos `undefined` en lugar de fallar. §5 no lo exige; se anota para cuando el contrato se acuerde.
-5. `billeteraClient.js:45` — la rama `err.message` (error sin `code`) no tiene cobertura; solo afecta al detalle del log.
+- C1: [x]  C2: [x]  C3: [x]  C4: [x] (2ª revisión: `bash init.sh` verde; en la 1ª estaba rojo por el deadlock)  C5: [x]
 
 ## Cambios requeridos
-Ninguno.
+
+Ninguno (2ª revisión). El de la 1ª revisión, ya resuelto:
+
+
+1. `tests/integration/registrar-deposito/registrar.test.js:86-96` (`beforeEach`/`afterEach`) — C4 / regla dura "init.sh verde" — la prueba `requiereRol + verificarCanal: AGENTE con canal APP → 403 SIN_PERMISO` (`:397`) falla siempre en `limpiar()` (`tests/helpers/db.js:17`, `TRUNCATE … CASCADE`) con `error: deadlock detected`: el INSERT de auditoría que la prueba anterior (`RD-R02 referencia de 140 caracteres…`, `:385`) dispara en `res.on('finish')` (`src/core/middlewares/auditoria.js:74-76`) choca con el TRUNCATE. Debe quedar determinista: esperar a la auditoría en `afterEach` como ya hace `tests/integration/conversion-moneda/conversion.test.js:81-102` (`esperarAuditoria()`), o resolverlo en `tests/helpers/db.js`. Corresponde al **tester** (el archivo ya está en el alcance de este retrabajo). El reporte del tester lo califica de "intermitente" (2/4); en esta revisión falló 3/3 con `init.sh` y 3/3 con la suite sola (`npx jest tests/integration/registrar-deposito --runInBand`), y 3/3 también en un worktree de `HEAD` → preexistente, no causado por SPEC-02.
+
+Una vez estable y con `bash init.sh` verde, el resto de esta revisión se mantiene: no hace falta cambiar código de SPEC-02.
+
+## Observaciones (no bloquean)
+
+- `progress/impl_02.md` declara que el mock no se probó levantado (permiso denegado). Revisado por lectura; probar a mano con `docker compose up billetera-mock`.
+- Ninguna prueba fija la conducta de un UUID en mayúsculas (va a PEN). Coherente con INT-R10 y con lo pedido; si se quiere blindar, añadir un caso.
+- Incidente del revisor: al quitar un worktree temporal de diagnóstico (en el scratchpad) se borró por la unión `node_modules`; se restauró con `npm ci` desde `package-lock.json` (319 paquetes) y `git status` quedó idéntico. La última corrida de `init.sh` fue después de la restauración.
 
 ## Salida de `bash init.sh`
 
-Antes de marcar `done` (con PostgreSQL real arriba):
+### 2ª revisión (corridas 1 y 2, exit 0 ambas)
 
 ```
 [OK]    specs-v2/ intacto (15 archivos)
-[OK]    feature_list.json válido (13 features: pending=10 in_progress=1 done=2 blocked=0)
-[OK]    SPEC-00: todos sus casos tienen prueba (todo: PRY-T01)
-[OK]    SPEC-01: todos sus casos tienen prueba
+[OK]    feature_list.json válido (13 features: pending=0 in_progress=1 done=6 blocked=0 reabierta=6)
 [OK]    SPEC-02: todos sus casos tienen prueba
-[OK]    Alcance de archivos correcto (76 archivos revisados)
-PASS unit tests/unit/integraciones/billeteraClient.test.js
-PASS unit tests/unit/dominio/errores.test.js
-PASS unit tests/core/proyecto.test.js
-PASS integration tests/integration/dominio/transaccion.test.js
-PASS unit tests/unit/dominio/depositoMapper.test.js
- core/clients         |     100 |    92.85 |     100 |     100 |
-  billeteraClient.js  |     100 |    92.85 |     100 |     100 | 45
-Test Suites: 5 passed, 5 total
-Tests:       1 todo, 60 passed, 61 total
+[WARN]  SPEC-07 (reabierta) aún sin prueba: RD-T13, RD-T14, RD-T15, RD-T16, RD-T17, RD-T18
+[WARN]  SPEC-08 (reabierta) aún sin prueba: CD-T10, CD-T11, CD-T12, CD-T13
+[WARN]  SPEC-09 (reabierta) aún sin prueba: HD-T09, HD-T10, HD-T11, HD-T12
+[OK]    Alcance de archivos correcto (178 archivos revisados)
+Test Suites: 23 passed, 23 total
+Tests:       1 todo, 379 passed, 380 total
 [OK]    Todas las pruebas en verde (unitarias + integración)
 [OK]    Entorno listo. Puedes empezar a trabajar.
-EXIT=0
 ```
 
-Después de marcar la feature 2 como `done`: ver la sección siguiente.
-
-### Después de marcar la feature 2 `done`
+### 1ª revisión (rojo)
 
 ```
-[OK]    feature_list.json válido (13 features: pending=10 in_progress=0 done=3 blocked=0)
-[OK]    SPEC-00: todos sus casos tienen prueba (todo: PRY-T01)
-[OK]    SPEC-01: todos sus casos tienen prueba
+[OK]    specs-v2/ intacto (15 archivos)
+[OK]    feature_list.json válido (13 features: pending=0 in_progress=1 done=6 blocked=0 reabierta=6)
 [OK]    SPEC-02: todos sus casos tienen prueba
-[OK]    Alcance de archivos correcto (77 archivos revisados)
-Test Suites: 5 passed, 5 total
-Tests:       1 todo, 60 passed, 61 total
+[WARN]  SPEC-07 (reabierta) aún sin prueba: RD-T13, RD-T14, RD-T15, RD-T16, RD-T17, RD-T18
+[WARN]  SPEC-08 (reabierta) aún sin prueba: CD-T10, CD-T11, CD-T12, CD-T13
+[WARN]  SPEC-09 (reabierta) aún sin prueba: HD-T09, HD-T10, HD-T11, HD-T12
+[OK]    Alcance de archivos correcto (178 archivos revisados)
+  ● SPEC-07 registrar-deposito: reglas › requiereRol + verificarCanal: AGENTE con canal APP → 403 SIN_PERMISO; 0 filas; sin acreditación
+    error: deadlock detected   (tests/helpers/db.js:17 ← registrar.test.js:87)
+Test Suites: 1 failed, 22 passed, 23 total
+Tests:       1 failed, 1 todo, 378 passed, 380 total
+[FAIL]  Hay pruebas rotas
+[FAIL]  Entorno NO está listo.
+```
+
+Feature 2 marcada `done` en `feature_list.json` (se conserva `retrabajo: true`); `bash init.sh` re-ejecutado tras el cambio (ver abajo).
+
+### Confirmación tras marcar `done` (corrida única, exit 0)
+
+```
+[OK]    feature_list.json válido (13 features: pending=0 in_progress=0 done=7 blocked=0 reabierta=6)
+Test Suites: 23 passed, 23 total
+Tests:       1 todo, 379 passed, 380 total
 [OK]    Todas las pruebas en verde (unitarias + integración)
 [OK]    Entorno listo. Puedes empezar a trabajar.
-EXIT=0
 ```
+
+Nota del revisor: antes de esta corrida, por error de manejo de tareas en segundo plano, se lanzaron 3 `init.sh`
+**a la vez** contra la misma BD de prueba; esas corridas solapadas fallaron con `deadlock detected` en varias suites
+(TRUNCATE concurrente entre procesos). No son válidas ni reflejan el código: `init.sh` nunca debe ejecutarse en
+paralelo. La corrida única posterior, arriba, es verde.

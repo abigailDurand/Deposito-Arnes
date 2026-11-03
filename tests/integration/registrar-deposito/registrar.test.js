@@ -15,7 +15,8 @@ const { token } = require('../../helpers/tokens');
 
 const RUTA = '/api/v1/depositos';
 const CUENTA = '0011-0123-456789';
-const CUENTA_USD = '0011-0123-000002';
+// SPEC-02 v2.0 §4: 0011-0123-000002 es PEN de usr-cliente-2 (ajena para usr-cliente-1).
+const CUENTA_AJENA = '0011-0123-000002';
 const CUENTA_BLOQUEADA = '0011-0123-000003';
 const PATRON_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const PATRON_ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
@@ -87,7 +88,25 @@ beforeEach(async () => {
   nock.cleanAll();
 });
 
-afterEach(() => {
+// AUD-R03: la auditoría se escribe en res.on('finish'), después de que supertest recibe la
+// respuesta. Si el TRUNCATE de limpiar() (siguiente beforeEach) coincide con ese INSERT, PostgreSQL
+// detecta un deadlock. Se espera a que el pool de la app quede sin consultas en curso y a que el
+// conteo de auditoria_depositos sea estable (mismo patrón que conversion.test.js).
+async function esperarAuditoria() {
+  const pausa = (ms) => new Promise((r) => { setTimeout(r, ms); });
+  const ocioso = () => poolApp.waitingCount === 0 && poolApp.totalCount === poolApp.idleCount;
+  let previo = -1;
+  let estables = 0;
+  for (let i = 0; i < 100 && estables < 2; i += 1) {
+    await pausa(25);
+    const { rows } = await pool.query('SELECT count(*)::int AS n FROM auditoria_depositos');
+    estables = ocioso() && rows[0].n === previo ? estables + 1 : 0;
+    previo = rows[0].n;
+  }
+}
+
+afterEach(async () => {
+  await esperarAuditoria();
   jest.restoreAllMocks();
   nock.abortPendingRequests();
   nock.cleanAll();
@@ -405,24 +424,24 @@ describe('SPEC-07 registrar-deposito: reglas', () => {
     expect(await depositos()).toHaveLength(0);
   });
 
-  test('verificarTitular: usr-cliente-1 por APP a su cuenta → 201; usr-cajero-1 por VENTANILLA a 0011-0123-000002 (USD) → 201', async () => {
+  test('verificarTitular: usr-cliente-1 por APP a su cuenta → 201; usr-cajero-1 por VENTANILLA a 0011-0123-000002 (ajena) → 201', async () => {
     const app = crearApp({ manifest: manifest() });
     billetera.cuentaActiva(CUENTA);
     billetera.acreditaOk(CUENTA);
-    billetera.cuentaActiva(CUENTA_USD);
-    const creditoUsd = billetera.acreditaOk(CUENTA_USD);
+    billetera.cuentaActiva(CUENTA_AJENA);
+    const creditoAjena = billetera.acreditaOk(CUENTA_AJENA);
 
     const cliente = await post(app, { usuario: 'usr-cliente-1', body: { ...BODY, canal: 'APP' } });
     const cajero = await post(app, {
       usuario: 'usr-cajero-1',
-      body: { cuentaDestino: CUENTA_USD, monto: '100.00', moneda: 'USD', canal: 'VENTANILLA' },
+      body: { cuentaDestino: CUENTA_AJENA, monto: '100.00', moneda: 'PEN', canal: 'VENTANILLA' },
     });
 
     expect(cliente.status).toBe(201);
     expect(cliente.body.canal).toBe('APP');
     expect(cajero.status).toBe(201);
-    expect(cajero.body).toMatchObject({ moneda: 'USD', canal: 'VENTANILLA', estado: 'COMPLETADO' });
-    expect(creditoUsd.peticiones[0].body).toMatchObject({ monto: '100.00', moneda: 'USD' });
+    expect(cajero.body).toMatchObject({ moneda: 'PEN', canal: 'VENTANILLA', estado: 'COMPLETADO' });
+    expect(creditoAjena.peticiones[0].body).toMatchObject({ monto: '100.00', moneda: 'PEN' });
     const filas = await depositos();
     expect(filas.map((f) => f.usuario_id).sort()).toEqual(['usr-cajero-1', 'usr-cliente-1']);
   });
