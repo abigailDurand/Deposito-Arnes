@@ -44,7 +44,7 @@
         "El objeto Deposito tiene la misma forma en todas las respuestas",
         "DOM-T01 a DOM-T08 pasan"
       ],
-      "status": "reabierta",
+      "status": "done",
       "retrabajo": true
     },
     {
@@ -62,7 +62,7 @@
         "Cambiar al billetera-service real solo requiere cambiar BILLETERA_URL y BILLETERA_TOKEN",
         "INT-T01 a INT-T07 pasan"
       ],
-      "status": "reabierta",
+      "status": "in_progress",
       "retrabajo": true
     },
     {

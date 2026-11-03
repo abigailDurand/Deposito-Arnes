@@ -2,7 +2,7 @@
 -- DOM-R04: sin columnas de features; cada feature crea su tabla con FK a depositos(id).
 CREATE TABLE depositos (
     id                UUID PRIMARY KEY,
-    cuenta_destino    VARCHAR(20)   NOT NULL,
+    cuenta_destino    VARCHAR(36)   NOT NULL,
     monto             NUMERIC(15,2) NOT NULL CHECK (monto > 0),
     moneda            CHAR(3)       NOT NULL CHECK (moneda IN ('PEN','USD')),
     monto_acreditar   NUMERIC(15,2) NOT NULL CHECK (monto_acreditar > 0),
