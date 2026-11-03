@@ -56,6 +56,8 @@ async function acreditarYCerrar(deposito, contexto) {
       cuenta: deposito.cuentaDestino,
       monto: deposito.montoAcreditar,
       moneda: deposito.monedaAcreditar,
+      usuarioId: deposito.usuarioId,
+      canal: deposito.canal,
     }, contexto.correlationId);
   } catch (err) {
     if (!(err instanceof ErrorApp)) throw err;
@@ -75,6 +77,7 @@ async function registrar(datos, usuario, correlationId) {
 
   const cuenta = await billeteraClient.consultarCuenta(datos.cuentaDestino, correlationId);
   if (cuenta === null) throw new ErrorApp('CUENTA_NO_ENCONTRADA');
+  // RD-R11: en la práctica solo aplica a la billetera PEN; las USD llegan siempre ACTIVA (INT-R04).
   if (cuenta.estado !== CUENTA_ACTIVA) throw new ErrorApp('CUENTA_INACTIVA');
 
   permisos.verificarCanal(usuario, datos.canal);
@@ -111,7 +114,8 @@ async function registrar(datos, usuario, correlationId) {
   return acreditarYCerrar(deposito, contexto);
 }
 
-// RD-R08: sin consultar la cuenta ni repetir validadores ni transformadores.
+// RD-R08: sin consultar la cuenta ni repetir validadores ni transformadores. Acredita con
+// monto_acreditar, moneda_acreditar, usuario_id y canal guardados (body idéntico → replay USD).
 async function reintentar(depositoId, usuario, correlationId) {
   const fila = await repository.buscarPorId(db.pool, depositoId);
   if (fila === null) throw new Error(`El depósito ${depositoId} del reintento no existe`);

@@ -552,19 +552,44 @@ Tests:       12 todo, 177 passed, 189 total
 
 ## SPEC-07
 
-- **Tester** · 2026-11-02 · Feature 7 (`registrar-deposito`).
+- **Tester** · 2026-11-03 · Feature 7 (`registrar-deposito`) · **retrabajo Billetera USD (spec v2.0)**, rama `inte_biUsd`.
 - **Ejecución:** `bash init.sh` completo con PostgreSQL real (`deposito_test`) → **`EXIT=0`**.
-  `[OK] SPEC-07: todos sus casos tienen prueba` · alcance OK (129 archivos) ·
-  `Test Suites: 14 passed, 14 total` · `Tests: 234 passed, 234 total` (**0 `todo`**).
-- Integración: `crearApp({ manifest })` armada **dentro de cada prueba** (el pipeline es un singleton), manifest a
-  medida con `registrar-deposito` activo y `limites-por-canal`, `conversion-moneda`, `alerta-uif` **inactivas**
-  (SPEC-07 §6). Billetera siempre con los helpers de nock de SPEC-02 (`nock.disableNetConnect()`, solo
-  `127.0.0.1` permitido para Supertest). Datos solo de SPEC-02 §4. `limpiar()` en `beforeEach`.
-- Unitarias: el service con todas sus dependencias espiadas (`billeteraClient`, `permisos`, `pipeline`,
-  `db.enTransaccion`, `repository`); el repository con un `db` simulado.
+  `[OK] SPEC-07: todos sus casos tienen prueba` · alcance OK (178 archivos) ·
+  `Test Suites: 23 passed, 23 total` · `Tests: 1 todo, 392 passed, 393 total`.
+- Integración: `crearApp({ manifest })` dentro de cada prueba; `registrar-deposito` activo y `limites-por-canal`,
+  `conversion-moneda`, `alerta-uif` **inactivas** (SPEC-07 §6). Billeteras PEN y USD con los helpers nock de
+  SPEC-02 (`tests/helpers/billetera.js`). Datos solo de SPEC-02 §4. `limpiar()` en `beforeEach`; en `afterEach`
+  (y entre las dos peticiones de RD-T18) se espera a la auditoría antes de limpiar (`esperarAuditoria`).
+- Unitarias: el service con todas sus dependencias espiadas; el repository con un `db` simulado.
 
-### Casos cubiertos
+### Retrabajo v2.0: casos nuevos (Billetera USD)
 
+| Caso | Archivo(s) |
+|---|---|
+| RD-T13 `usr-agente-1` `"150.00"` USD AGENTE a `11111111-…` → 201 COMPLETADO (cuerpo §5); 1 fila con `cuenta_destino` UUID; Billetera USD recibió 1 POST con `Idempotency-Key` = `id`, `X-Correlation-Id`, body exacto `{ cliente_id: "usr-agente-1", cuenta_destino_id, monto: "150.00", moneda: "USD", metodo_origen: "EFECTIVO", referencia_externa: id }`; billetera PEN no llamada | `tests/integration/registrar-deposito/registrar.test.js` + `tests/unit/registrar-deposito/service.test.js` (`acreditar` recibe `{ depositoId, cuenta, monto Decimal, moneda, usuarioId, canal }`) |
+| RD-T14 `"100.00"` PEN a `11111111-…` con `conversion-moneda` inactiva → 422 `MONEDA_NO_SOPORTADA`; 0 filas; sin acreditación | integración + unitaria |
+| RD-T15 UUID incompleto (3 variantes) o con mayúsculas (2 variantes) → 400 `FORMATO_INVALIDO`; billetera no llamada; 0 filas | integración + unitaria (schema; UUID en minúsculas y cuenta PEN siguen válidos) |
+| RD-T16 Billetera USD 404 al consultar → 422 `CUENTA_NO_ENCONTRADA`; 0 filas; sin acreditación | integración + unitaria |
+| RD-T17 Billetera USD 409 al acreditar → 502 `BILLETERA_NO_DISPONIBLE`; depósito FALLIDO; clave `REINTENTABLE` | integración + unitaria |
+| RD-T18 `99999999-…` 500 al acreditar → 502 FALLIDO (clave `REINTENTABLE`); reintento HTTP con la **misma** `Idempotency-Key` y billetera OK (200 replay) → 201, mismo `id`, COMPLETADO, 1 fila, clave `TERMINADO`; sin nueva consulta; la 2.ª petición a Billetera USD lleva la **misma** `Idempotency-Key` y un body `toEqual` al de la 1.ª | integración + unitaria (el reintento, hecho por otro usuario, pasa a `acreditar` exactamente los mismos datos: `usuarioId`/`canal` salen de la fila, RD-R08) |
+
+Nota RD-T18: el helper `billeteraUsdExiste` solo conoce `11111111-…` y `22222222-…` (no se puede editar), así que la
+consulta de `99999999-…` se intercepta con nock dentro de la prueba con los datos de SPEC-02 §4 / mock
+(USD, sin titular). Billetera sigue simulada solo con nock.
+
+### Retrabajo v2.0: pruebas existentes actualizadas (obsoletas por RD-R02 / `acreditar` / RD-R08)
+
+- `tests/unit/registrar-deposito/service.test.js`:
+  - RD-T11 y RD-T12: ahora comprueban que `acreditar` recibe `usuarioId: "usr-agente-1"` y `canal: "AGENTE"`.
+  - `RD-R08 reintentar FALLIDO …`: la fila guardada tiene `usuario_id: usr-cajero-1`, `canal: VENTANILLA` y se
+    comprueba que `acreditar` recibe esos (no los del JWT del que reintenta).
+  - `schema e index`: añade que un UUID en minúsculas es válido (RD-R02 v2.0).
+- `tests/integration/registrar-deposito/registrar.test.js`: RD-T01..T12 siguen válidas sin cambios (PEN; el body
+  PEN de INT-R12 no lleva `usuarioId`/`canal`). Se añadió `require('../../../src/config')` para el nock de RD-T18.
+- No se tocó el `test.todo` `CM-R03 PEN → USD …` de `tests/integration/conversion-moneda/conversion.test.js`: es de
+  SPEC-11 y lo desbloquea este retrabajo (el schema ya acepta UUID), pero se convierte en el retrabajo de SPEC-11.
+
+### Casos cubiertos (v1, vigentes)
 | Caso | Archivo(s) |
 |---|---|
 | RD-T01 `usr-agente-1` `"150.00"` PEN AGENTE → 201 COMPLETADO (cuerpo exacto de §5, `extensiones: {}`); 1 fila; billetera recibió `{ depositoId, monto: "150.00", moneda, concepto }` 1 vez; clave `TERMINADO` | `tests/integration/registrar-deposito/registrar.test.js` |
@@ -604,7 +629,7 @@ Pruebas adicionales por regla (todas ✅):
   transformado, se guarda el monto original y la respuesta trae las `extensiones`; en el reintento,
   `extensiones = leerExtensiones`.
 - **SEG-R10/R11 sobre la ruta real:** AGENTE con canal APP → 403 sin filas ni acreditación; `usr-cliente-1` por APP a
-  su cuenta → 201; `usr-cajero-1` por VENTANILLA a `0011-0123-000002` (USD) → 201.
+  su cuenta → 201; `usr-cajero-1` por VENTANILLA a `0011-0123-000002` (PEN de `usr-cliente-2`) → 201.
 - `acreditar` que lanza algo que no es `ErrorApp` → se relanza tal cual, no pasa a FALLIDO (decisión 4 de impl_07).
 - `index.js` cumple el contrato de endpoint de SPEC-06 §4.
 
@@ -630,44 +655,32 @@ de otras specs (esta tabla es la referencia vigente). PRY-T01 se actualizó en `
 
 ### Casos en `test.todo`
 
-Ninguno. No queda ningún `test.todo` en `tests/` (`grep -rn "test.todo" tests` → 0).
+Ninguno de SPEC-07. En `tests/` queda 1 `test.todo`, de SPEC-11: `CM-R03 PEN → USD a billetera 22222222-…`
+(`tests/integration/conversion-moneda/conversion.test.js:265`); esperaba este retrabajo de SPEC-07 y queda para el
+retrabajo de SPEC-11 (no se toca aquí, por instrucción del leader).
 
 ### Pruebas fallidas
 
 Ninguna.
 
-**Observación (no es fallo del código):** en RD-T08 e IDE-T07, nock no espera los 6 s reales: cuando la demora
-del interceptor supera el timeout del socket (`BILLETERA_TIMEOUT_MS` = 5000), nock emite el `timeout` de inmediato.
-Por eso esas pruebas comprueban el resultado (502 `BILLETERA_NO_DISPONIBLE`, depósito FALLIDO, reintento) y no el
-tiempo de pared. IDE-T04 (2 s < timeout) sí espera la demora real (≥ 1,9 s).
+**Observación (no es fallo del código):** en RD-T08 e IDE-T07 nock emite el `timeout` del socket de inmediato
+cuando la demora supera `BILLETERA_TIMEOUT_MS`; esas pruebas comprueban el resultado (502, FALLIDO), no el tiempo.
 
 ### Cobertura (`src/core/` y `src/modules/`)
 
 ```
-----------------------------|---------|----------|---------|---------|-------------------
-File                        | % Stmts | % Branch | % Funcs | % Lines | Uncovered Line #s
-----------------------------|---------|----------|---------|---------|-------------------
-All files                   |   99.59 |    94.53 |   98.91 |   99.77 |
- core                       |   98.93 |    92.98 |   97.14 |   99.42 |
- core/clients               |     100 |    92.85 |     100 |     100 |
- core/middlewares           |     100 |    94.87 |     100 |     100 |
- core/repositories          |     100 |     87.5 |     100 |     100 |
- core/tareas                |     100 |      100 |     100 |     100 |
- modules/registrar-deposito |     100 |      100 |     100 |     100 |
-  controller.js             |     100 |      100 |     100 |     100 |
-  index.js                  |     100 |      100 |     100 |     100 |
-  repository.js             |     100 |      100 |     100 |     100 |
-  routes.js                 |     100 |      100 |     100 |     100 |
-  schema.js                 |     100 |      100 |     100 |     100 |
-  service.js                |     100 |      100 |     100 |     100 |
-----------------------------|---------|----------|---------|---------|-------------------
-Test Suites: 14 passed, 14 total
-Tests:       234 passed, 234 total
+File                         | % Stmts | % Branch | % Funcs | % Lines
+All files                    |   99.72 |     95.1 |   99.23 |   99.84
+ core                        |   99.46 |    94.73 |   97.14 |   99.42
+ core/clients                |     100 |    95.12 |     100 |     100
+ modules/registrar-deposito  |     100 |      100 |     100 |     100
+  schema.js                  |     100 |      100 |     100 |     100
+  service.js                 |     100 |      100 |     100 |     100
+Test Suites: 23 passed, 23 total
+Tests:       1 todo, 392 passed, 393 total
 ```
 
-- `src/modules/`: de **0 %** (sin pruebas; el umbral fallaba según `progress/impl_07.md`) a **100 %** en stmts,
-  branches, funcs y lines (≥ 80 %).
-- `src/core/`: 99,59 % stmts · 94,53 % branches (≥ 80 %).
+Umbral 80 % cumplido en `src/core/` y `src/modules/`.
 
 ## SPEC-08
 

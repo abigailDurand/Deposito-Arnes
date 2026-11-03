@@ -73,3 +73,9 @@ SPEC-01 (dev → revisor). Luego SPEC-02 con `Busti:codigo/` como referencia.
 - SPEC-02: dev → tester → revisor RECHAZADO (deadlock preexistente en registrar.test.js) → tester corrigió → revisor APROBADO (`progress/review_02.md`). Leader: init.sh 379 + 1 todo.
 - SPEC-03 → `in_progress` (solo pruebas: tester → revisor).
 - SPEC-03: tester → revisor APROBADO (`progress/review_03.md`). Leader: init.sh 380 + 1 todo.
+- SPEC-07 → `in_progress` (dev con `Busti:codigo/` como referencia → tester → revisor).
+- Feature en curso: 7 — registrar-deposito (retrabajo, desarrolladorback) · inicio 2026-11-03
+  - Plan: (1) RD-R02 regex PEN|UUID minúsculas en schema; (2) `acreditar` con usuarioId/canal (registrar y reintento);
+    (3) mantener armarContexto con logger/db y montoValido sobre string; (4) init.sh; (5) `progress/impl_07.md`.
+- SPEC-07 dev (retrabajo): schema.js + service.js. `init.sh` verde 380 + 1 todo; avisa RD-T13..T18 sin prueba. Siguiente: tester.
+- SPEC-07: dev → tester → revisor APROBADO (`progress/review_07.md`). Leader: init.sh 392 + 1 todo.

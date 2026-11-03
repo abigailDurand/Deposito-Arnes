@@ -4,6 +4,7 @@ const nock = require('nock');
 const request = require('supertest');
 
 const { crearApp } = require('../../../src/app');
+const config = require('../../../src/config');
 const billeteraClient = require('../../../src/core/clients/billeteraClient');
 const { pool: poolApp } = require('../../../src/core/db');
 const pipeline = require('../../../src/core/pipeline');
@@ -520,5 +521,185 @@ describe('SPEC-07 registrar-deposito: reglas', () => {
 
     expect(credito.peticiones[0].body).toMatchObject({ depositoId: id, monto: '149.50', moneda: 'PEN' });
     expect((await depositos())[0].estado).toBe('FALLIDO');
+  });
+});
+
+describe('SPEC-07 registrar-deposito: Billetera USD (RD-T13..RD-T18)', () => {
+  // SPEC-02 §4: 11111111-… (usr-cliente-1), 99999999-… (responde 500 al acreditar; sin titular).
+  const WALLET = '11111111-1111-4111-8111-111111111111';
+  const WALLET_FALLA = '99999999-9999-4999-8999-999999999999';
+  const BODY_USD = { cuentaDestino: WALLET, monto: '150.00', moneda: 'USD', canal: 'AGENTE' };
+
+  // El helper billeteraUsdExiste solo conoce 11111111-… y 22222222-…: la consulta de 99999999-…
+  // se intercepta aquí con los datos del mock de SPEC-02 §4 (USD, sin titular).
+  function billeteraFallaExiste() {
+    const peticiones = [];
+    const scope = nock(config.billeteraUsd.url)
+      .get(`/api/v1/billetera/wallets/${WALLET_FALLA}`)
+      .reply(function responder() {
+        peticiones.push({ headers: { ...this.req.headers } });
+        return [200, { id: WALLET_FALLA, user_id: null, nombre: null, balance: '0.00', moneda: 'USD' }];
+      });
+    scope.peticiones = peticiones;
+    return scope;
+  }
+
+  test('RD-T13 usr-agente-1 "150.00" USD AGENTE a 11111111-… → 201 COMPLETADO; Billetera USD recibió Idempotency-Key = id, cliente_id, metodo_origen EFECTIVO y monto "150.00"', async () => {
+    const app = crearApp({ manifest: manifest() });
+    const consulta = billetera.billeteraUsdExiste(WALLET);
+    const credito = billetera.acreditaUsdOk();
+    const creditoPen = billetera.acreditaOk(CUENTA);
+
+    const res = await post(app, { body: BODY_USD, clave: 'rd-t13-clave', correlation: 'rd-t13' });
+
+    expect(res.status).toBe(201);
+    expect(res.body).toEqual({
+      id: expect.stringMatching(PATRON_UUID),
+      cuentaDestino: WALLET,
+      monto: '150.00',
+      moneda: 'USD',
+      canal: 'AGENTE',
+      referencia: null,
+      estado: 'COMPLETADO',
+      creadoEn: expect.stringMatching(PATRON_ISO),
+      actualizadoEn: expect.stringMatching(PATRON_ISO),
+      extensiones: {},
+    });
+    const filas = await depositos();
+    expect(filas).toHaveLength(1);
+    expect(filas[0]).toMatchObject({
+      id: res.body.id, cuenta_destino: WALLET, monto: '150.00', moneda: 'USD',
+      monto_acreditar: '150.00', moneda_acreditar: 'USD', canal: 'AGENTE',
+      estado: 'COMPLETADO', usuario_id: 'usr-agente-1',
+    });
+
+    expect(consulta.peticiones).toHaveLength(1);
+    expect(credito.peticiones).toHaveLength(1);
+    expect(credito.peticiones[0].headers['idempotency-key']).toBe(res.body.id);
+    expect(credito.peticiones[0].headers['x-correlation-id']).toBe('rd-t13');
+    expect(credito.peticiones[0].body).toEqual({
+      cliente_id: 'usr-agente-1',
+      cuenta_destino_id: WALLET,
+      monto: '150.00',
+      moneda: 'USD',
+      metodo_origen: 'EFECTIVO',
+      referencia_externa: res.body.id,
+    });
+    expect(creditoPen.peticiones).toHaveLength(0);
+  });
+
+  test('RD-T14 "100.00" PEN a 11111111-… (USD) con conversion-moneda inactiva → 422 MONEDA_NO_SOPORTADA; 0 filas; sin acreditación', async () => {
+    const app = crearApp({ manifest: manifest() });
+    const consulta = billetera.billeteraUsdExiste(WALLET);
+    const credito = billetera.acreditaUsdOk();
+
+    const res = await post(app, { body: { ...BODY_USD, monto: '100.00', moneda: 'PEN' } });
+
+    esError(res, 422, 'MONEDA_NO_SOPORTADA');
+    expect(consulta.peticiones).toHaveLength(1);
+    expect(credito.peticiones).toHaveLength(0);
+    expect(await depositos()).toHaveLength(0);
+  });
+
+  test('RD-T15 cuentaDestino UUID incompleto o en mayúsculas → 400 FORMATO_INVALIDO; billetera no llamada', async () => {
+    const app = crearApp({ manifest: manifest() });
+    const consulta = billetera.billeteraUsdExiste(WALLET);
+    const credito = billetera.acreditaUsdOk();
+
+    const cuentas = [
+      '11111111-1111-4111-8111-11111111111',
+      '11111111-1111-4111-8111',
+      '11111111111141118111111111111111',
+      '11111111-1111-4111-8111-11111111111A',
+      'ABCDEF01-1111-4111-8111-111111111111',
+    ];
+    for (const [i, cuentaDestino] of cuentas.entries()) {
+      const res = await post(app, { body: { ...BODY_USD, cuentaDestino }, clave: `rd-t15-clave-${i}` });
+      esError(res, 400, 'FORMATO_INVALIDO');
+    }
+
+    expect(consulta.peticiones).toHaveLength(0);
+    expect(credito.peticiones).toHaveLength(0);
+    expect(await depositos()).toHaveLength(0);
+  });
+
+  test('RD-T16 Billetera USD 404 al consultar → 422 CUENTA_NO_ENCONTRADA; 0 filas; sin acreditación', async () => {
+    const app = crearApp({ manifest: manifest() });
+    const consulta = billetera.billeteraUsdNoExiste(WALLET);
+    const credito = billetera.acreditaUsdOk();
+
+    const res = await post(app, { body: BODY_USD });
+
+    esError(res, 422, 'CUENTA_NO_ENCONTRADA');
+    expect(consulta.peticiones).toHaveLength(1);
+    expect(credito.peticiones).toHaveLength(0);
+    expect(await depositos()).toHaveLength(0);
+  });
+
+  test('RD-T17 Billetera USD 409 al acreditar → 502 BILLETERA_NO_DISPONIBLE; depósito FALLIDO; clave REINTENTABLE', async () => {
+    const app = crearApp({ manifest: manifest() });
+    billetera.billeteraUsdExiste(WALLET);
+    const credito = billetera.acreditaUsdConflicto();
+
+    const res = await post(app, { body: BODY_USD });
+
+    esError(res, 502, 'BILLETERA_NO_DISPONIBLE');
+    const filas = await depositos();
+    expect(filas).toHaveLength(1);
+    expect(filas[0]).toMatchObject({ estado: 'FALLIDO', cuenta_destino: WALLET, moneda: 'USD' });
+    expect(credito.peticiones).toHaveLength(1);
+    expect(credito.peticiones[0].headers['idempotency-key']).toBe(filas[0].id);
+    expect(await claves()).toEqual([
+      expect.objectContaining({ estado: 'REINTENTABLE', deposito_id: filas[0].id }),
+    ]);
+  });
+
+  test('RD-T18 Billetera USD 500 al acreditar (99999999-…) → 502 FALLIDO; reintento con la misma Idempotency-Key y billetera OK → mismo id, COMPLETADO; misma clave y body idéntico a billetera', async () => {
+    const app = crearApp({ manifest: manifest() });
+    const consulta = billeteraFallaExiste();
+    const fallo = billetera.acreditaUsdFalla({ status: 500 });
+    const body = { ...BODY_USD, cuentaDestino: WALLET_FALLA };
+
+    const primero = await post(app, { body, clave: 'rd-t18-clave', correlation: 'rd-t18-a' });
+
+    esError(primero, 502, 'BILLETERA_NO_DISPONIBLE');
+    const [fallido] = await depositos();
+    expect(fallido).toMatchObject({ estado: 'FALLIDO', cuenta_destino: WALLET_FALLA });
+    expect(await claves()).toEqual([
+      expect.objectContaining({ estado: 'REINTENTABLE', deposito_id: fallido.id }),
+    ]);
+    await esperarAuditoria();
+
+    const replay = billetera.acreditaUsdReplay();
+    const segundo = await post(app, { body, clave: 'rd-t18-clave', correlation: 'rd-t18-b' });
+
+    expect(segundo.status).toBe(201);
+    expect(segundo.body).toMatchObject({
+      id: fallido.id, cuentaDestino: WALLET_FALLA, monto: '150.00', moneda: 'USD', estado: 'COMPLETADO',
+    });
+    const filas = await depositos();
+    expect(filas).toHaveLength(1);
+    expect(filas[0]).toMatchObject({ id: fallido.id, estado: 'COMPLETADO' });
+    expect(await claves()).toEqual([
+      expect.objectContaining({ estado: 'TERMINADO', status_http: 201, deposito_id: fallido.id }),
+    ]);
+
+    // RD-R08 / INT-R06: sin nueva consulta; misma Idempotency-Key y body idéntico → replay.
+    expect(consulta.peticiones).toHaveLength(1);
+    expect(fallo.peticiones).toHaveLength(1);
+    expect(replay.peticiones).toHaveLength(1);
+    const [original] = fallo.peticiones;
+    const [reintento] = replay.peticiones;
+    expect(original.headers['idempotency-key']).toBe(fallido.id);
+    expect(reintento.headers['idempotency-key']).toBe(original.headers['idempotency-key']);
+    expect(reintento.body).toEqual(original.body);
+    expect(original.body).toEqual({
+      cliente_id: 'usr-agente-1',
+      cuenta_destino_id: WALLET_FALLA,
+      monto: '150.00',
+      moneda: 'USD',
+      metodo_origen: 'EFECTIVO',
+      referencia_externa: fallido.id,
+    });
   });
 });

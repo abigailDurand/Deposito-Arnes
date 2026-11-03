@@ -179,6 +179,10 @@ describe('SPEC-07 service: casos', () => {
       [db.pool, id, 'PROCESANDO', 'COMPLETADO'],
     ]);
     expect(res).toMatchObject({ id, estado: 'COMPLETADO' });
+    // SPEC-02 INT-R05: acreditar recibe además usuarioId y canal.
+    expect(deps.acreditar.mock.calls[0][0]).toMatchObject({
+      depositoId: id, cuenta: CUENTA, moneda: 'PEN', usuarioId: 'usr-agente-1', canal: 'AGENTE',
+    });
   });
 
   test('RD-T12 reintentar FALLIDO con billetera OK → mismo id, COMPLETADO, sin consultar cuenta ni validadores/transformadores', async () => {
@@ -198,7 +202,9 @@ describe('SPEC-07 service: casos', () => {
       'buscarPorId', 'leerExtensiones', 'FALLIDO→PROCESANDO', 'acreditar',
       'PROCESANDO→COMPLETADO', 'ejecutarPostProcesos',
     ]);
-    expect(deps.acreditar.mock.calls[0][0].depositoId).toBe(ID);
+    expect(deps.acreditar.mock.calls[0][0]).toMatchObject({
+      depositoId: ID, cuenta: CUENTA, moneda: 'PEN', usuarioId: 'usr-agente-1', canal: 'AGENTE',
+    });
   });
 });
 
@@ -302,9 +308,10 @@ describe('SPEC-07 service: reglas', () => {
     expect(deps.leerExtensiones.mock.calls[0][1]).toMatchObject({ cuenta: null, usuario: AGENTE_1 });
   });
 
-  test('RD-R08 reintentar FALLIDO acredita monto_acreditar/moneda_acreditar guardados; post-procesos con contexto.cuenta = null', async () => {
+  test('RD-R08 reintentar FALLIDO acredita monto_acreditar/moneda_acreditar/usuario_id/canal guardados; post-procesos con contexto.cuenta = null', async () => {
     deps.buscarPorId.mockResolvedValueOnce(fila('FALLIDO', {
       monto: '100.00', moneda: 'USD', monto_acreditar: '370.00', moneda_acreditar: 'PEN',
+      usuario_id: 'usr-cajero-1', canal: 'VENTANILLA',
     }));
     deps.leerExtensiones.mockResolvedValueOnce({ conversion: { tasa: '3.70' } });
 
@@ -315,6 +322,8 @@ describe('SPEC-07 service: reglas', () => {
     expect(credito.monto.toFixed(2)).toBe('370.00');
     expect(credito.moneda).toBe('PEN');
     expect(credito.cuenta).toBe(CUENTA);
+    expect(credito.usuarioId).toBe('usr-cajero-1');
+    expect(credito.canal).toBe('VENTANILLA');
     const [deposito, contexto] = deps.postProcesos.mock.calls[0];
     expect(contexto.cuenta).toBeNull();
     expect(deposito).toMatchObject({ id: ID, moneda: 'USD', estado: 'COMPLETADO' });
@@ -388,5 +397,119 @@ describe('SPEC-07 repository (db simulada)', () => {
     expect(esquemaDeposito.safeParse(DATOS).success).toBe(true);
     expect(esquemaDeposito.safeParse({ ...DATOS, x: 1 }).success).toBe(false);
     expect(esquemaDeposito.safeParse({ ...DATOS, monto: 150 }).success).toBe(false);
+    // RD-R02 v2.0: también UUID en minúsculas (billetera USD).
+    expect(esquemaDeposito.safeParse({ ...DATOS, cuentaDestino: '11111111-1111-4111-8111-111111111111', moneda: 'USD' }).success).toBe(true);
+  });
+});
+
+describe('SPEC-07 service: Billetera USD (RD-T13..RD-T18)', () => {
+  // SPEC-02 §4: billetera USD 11111111-… de usr-cliente-1; consultarCuenta USD devuelve ACTIVA (INT-R04).
+  const WALLET = '11111111-1111-4111-8111-111111111111';
+  const WALLET_FALLA = '99999999-9999-4999-8999-999999999999';
+  const CUENTA_USD = { numero: WALLET, estado: 'ACTIVA', moneda: 'USD', titularId: 'usr-cliente-1' };
+  const DATOS_USD = { cuentaDestino: WALLET, monto: '150.00', moneda: 'USD', canal: 'AGENTE' };
+
+  beforeEach(() => {
+    deps.consultarCuenta.mockImplementation(async (numero) => {
+      orden.push('consultarCuenta');
+      return { ...CUENTA_USD, numero, titularId: numero === WALLET ? 'usr-cliente-1' : null };
+    });
+  });
+
+  test('RD-T13 usr-agente-1 "150.00" USD AGENTE a 11111111-… → COMPLETADO; acreditar recibe depositoId = id, usuarioId y canal', async () => {
+    const res = await service.registrar(DATOS_USD, AGENTE_1, 'c');
+
+    const id = deps.insertar.mock.calls[0][1].id;
+    expect(res).toMatchObject({ id, estado: 'COMPLETADO' });
+    expect(deps.consultarCuenta).toHaveBeenCalledWith(WALLET, 'c');
+    expect(deps.acreditar).toHaveBeenCalledTimes(1);
+    const [credito, correlationId] = deps.acreditar.mock.calls[0];
+    expect(correlationId).toBe('c');
+    expect(Object.keys(credito).sort()).toEqual(['canal', 'cuenta', 'depositoId', 'moneda', 'monto', 'usuarioId']);
+    expect(credito).toMatchObject({
+      depositoId: id, cuenta: WALLET, moneda: 'USD', usuarioId: 'usr-agente-1', canal: 'AGENTE',
+    });
+    expect(credito.monto).toBeInstanceOf(Decimal);
+    expect(credito.monto.toFixed(2)).toBe('150.00');
+    expect(deps.cambiarEstado.mock.calls.map((c) => `${c[2]}→${c[3]}`))
+      .toEqual(['PENDIENTE→PROCESANDO', 'PROCESANDO→COMPLETADO']);
+  });
+
+  test('RD-T14 "100.00" PEN a 11111111-… (USD) sin conversión → MONEDA_NO_SOPORTADA 422; nada guardado ni acreditado', async () => {
+    await expect(service.registrar({ ...DATOS_USD, monto: '100.00', moneda: 'PEN' }, AGENTE_1, 'c'))
+      .rejects.toMatchObject({ codigo: 'MONEDA_NO_SOPORTADA', status: 422 });
+    expect(deps.transformadores).toHaveBeenCalledTimes(1);
+    expect(deps.enTransaccion).not.toHaveBeenCalled();
+    expect(deps.acreditar).not.toHaveBeenCalled();
+  });
+
+  test('RD-T15 schema: UUID incompleto o con mayúsculas → inválido; UUID en minúsculas y cuenta PEN → válidos', () => {
+    for (const cuentaDestino of [
+      '11111111-1111-4111-8111-11111111111',
+      '11111111-1111-4111-8111',
+      '11111111111141118111111111111111',
+      '11111111-1111-4111-8111-11111111111A',
+      'ABCDEF01-1111-4111-8111-111111111111',
+      ` ${WALLET}`,
+    ]) {
+      expect(esquemaDeposito.safeParse({ ...DATOS_USD, cuentaDestino }).success).toBe(false);
+    }
+    expect(esquemaDeposito.safeParse(DATOS_USD).success).toBe(true);
+    expect(esquemaDeposito.safeParse({ ...DATOS_USD, cuentaDestino: '22222222-2222-4222-8222-222222222222' }).success).toBe(true);
+    expect(esquemaDeposito.safeParse(DATOS).success).toBe(true);
+  });
+
+  test('RD-T16 Billetera USD: consultarCuenta → null → CUENTA_NO_ENCONTRADA 422; nada guardado', async () => {
+    deps.consultarCuenta.mockResolvedValueOnce(null);
+    await expect(service.registrar(DATOS_USD, AGENTE_1, 'c'))
+      .rejects.toMatchObject({ codigo: 'CUENTA_NO_ENCONTRADA', status: 422 });
+    expect(deps.enTransaccion).not.toHaveBeenCalled();
+    expect(deps.acreditar).not.toHaveBeenCalled();
+  });
+
+  test('RD-T17 Billetera USD: acreditar lanza BILLETERA_NO_DISPONIBLE (409) → PROCESANDO→FALLIDO y 502 con depositoId', async () => {
+    deps.acreditar.mockRejectedValueOnce(new ErrorApp('BILLETERA_NO_DISPONIBLE'));
+
+    const error = await service.registrar(DATOS_USD, AGENTE_1, 'c').catch((e) => e);
+
+    const id = deps.insertar.mock.calls[0][1].id;
+    expect(error).toMatchObject({ codigo: 'BILLETERA_NO_DISPONIBLE', status: 502, depositoId: id });
+    expect(deps.cambiarEstado.mock.calls.map((c) => `${c[2]}→${c[3]}`))
+      .toEqual(['PENDIENTE→PROCESANDO', 'PROCESANDO→FALLIDO']);
+    expect(deps.postProcesos).not.toHaveBeenCalled();
+  });
+
+  test('RD-T18 Billetera USD 500 al acreditar → FALLIDO; reintentar → mismo id, COMPLETADO y acreditar recibe exactamente los mismos datos', async () => {
+    deps.acreditar.mockRejectedValueOnce(new ErrorApp('BILLETERA_NO_DISPONIBLE'));
+    const datos = { ...DATOS_USD, cuentaDestino: WALLET_FALLA };
+
+    const error = await service.registrar(datos, AGENTE_1, 'c1').catch((e) => e);
+    expect(error).toMatchObject({ codigo: 'BILLETERA_NO_DISPONIBLE', status: 502 });
+    const guardado = deps.insertar.mock.calls[0][1];
+
+    deps.buscarPorId.mockResolvedValueOnce(fila('FALLIDO', {
+      id: guardado.id,
+      cuenta_destino: WALLET_FALLA,
+      monto: '150.00',
+      moneda: 'USD',
+      monto_acreditar: '150.00',
+      moneda_acreditar: 'USD',
+      canal: 'AGENTE',
+      usuario_id: 'usr-agente-1',
+    }));
+    // Otro usuario del mismo rol reintenta: el body debe salir de la fila, no del JWT actual (RD-R08).
+    const res = await service.reintentar(guardado.id, { id: 'usr-agente-2', roles: ['AGENTE'] }, 'c2');
+
+    // La respuesta sale de la fila simulada de cambiarEstado; aquí solo importan id y estado.
+    expect(res).toMatchObject({ id: guardado.id, estado: 'COMPLETADO' });
+    expect(deps.consultarCuenta).toHaveBeenCalledTimes(1);
+    expect(deps.acreditar).toHaveBeenCalledTimes(2);
+    const [original] = deps.acreditar.mock.calls[0];
+    const [reintento] = deps.acreditar.mock.calls[1];
+    expect(reintento.depositoId).toBe(guardado.id);
+    expect(reintento.monto.toFixed(2)).toBe(original.monto.toFixed(2));
+    expect({ ...reintento, monto: reintento.monto.toFixed(2) })
+      .toEqual({ ...original, monto: original.monto.toFixed(2) });
+    expect(reintento).toMatchObject({ usuarioId: 'usr-agente-1', canal: 'AGENTE', moneda: 'USD' });
   });
 });
