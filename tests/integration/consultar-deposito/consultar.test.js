@@ -3,6 +3,8 @@
 const nock = require('nock');
 const request = require('supertest');
 
+const config = require('../../../src/config');
+
 const { crearApp } = require('../../../src/app');
 const { pool: poolApp } = require('../../../src/core/db');
 const pipeline = require('../../../src/core/pipeline');
@@ -17,7 +19,9 @@ const registro = require('../../core/fixtures/registro');
 registrarFixtures(jest);
 
 const CUENTA = '0011-0123-456789';
-const CUENTA_USD = '0011-0123-000002';
+// SPEC-02 §4: billeteras USD (INT-R10: UUID → Billetera USD).
+const BILLETERA_USD_1 = '11111111-1111-4111-8111-111111111111'; // titular usr-cliente-1
+const BILLETERA_USD_2 = '22222222-2222-4222-8222-222222222222'; // titular usr-cliente-2
 const ID = '7f1c2e9a-0b1d-4c5e-9f00-123456789abc';
 const ID_INEXISTENTE = '00000000-0000-4000-8000-000000000000';
 const CREADO = '2026-10-13T19:20:00.000Z';
@@ -284,6 +288,71 @@ describe('SPEC-08 consultar-deposito: casos', () => {
   });
 });
 
+// Trampa para la billetera PEN: cualquier GET a su host queda registrado (no debe llamarse).
+function trampaPen() {
+  return nock(config.billetera.url).get(/.*/).reply(200, {});
+}
+
+describe('SPEC-08 consultar-deposito: Billetera USD', () => {
+  test('CD-T10 usr-cliente-1 consulta un depósito a 11111111-1111-4111-8111-111111111111 → 200; '
+    + 'se llamó a GET /api/v1/billetera/wallets/{id} y no a la billetera PEN', async () => {
+    const app = crearApp({ manifest: manifest() });
+    await insertarDeposito({ cuenta: BILLETERA_USD_1, moneda: 'USD' });
+    const usd = billetera.billeteraUsdExiste(BILLETERA_USD_1);
+    const pen = trampaPen();
+
+    const res = await get(app, ID, { correlation: 'cd-t10' });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual(cuerpoEsperado({ cuentaDestino: BILLETERA_USD_1, moneda: 'USD' }));
+    expect(usd.isDone()).toBe(true);
+    expect(usd.peticiones).toHaveLength(1);
+    expect(usd.peticiones[0].headers['x-correlation-id']).toBe('cd-t10');
+    expect(pen.isDone()).toBe(false);
+  });
+
+  test('CD-T11 usr-cliente-2 consulta un depósito a 11111111-1111-4111-8111-111111111111 '
+    + '(titular usr-cliente-1) → 404 DEPOSITO_NO_ENCONTRADO', async () => {
+    const app = crearApp({ manifest: manifest() });
+    await insertarDeposito({ cuenta: BILLETERA_USD_1, moneda: 'USD' });
+    const usd = billetera.billeteraUsdExiste(BILLETERA_USD_1);
+    const pen = trampaPen();
+
+    const res = await get(app, ID, { usuario: 'usr-cliente-2' });
+
+    esError(res, 404, 'DEPOSITO_NO_ENCONTRADO');
+    expect(res.body.mensaje).toBe('No existe un depósito con ese id.');
+    expect(usd.peticiones).toHaveLength(1);
+    expect(pen.isDone()).toBe(false);
+  });
+
+  test('CD-T12 Billetera USD 404 al verificar titular → 404 DEPOSITO_NO_ENCONTRADO (CD-R04)', async () => {
+    const app = crearApp({ manifest: manifest() });
+    await insertarDeposito({ cuenta: BILLETERA_USD_1, moneda: 'USD' });
+    const usd = billetera.billeteraUsdNoExiste(BILLETERA_USD_1);
+    const pen = trampaPen();
+
+    const res = await get(app, ID);
+
+    esError(res, 404, 'DEPOSITO_NO_ENCONTRADO');
+    expect(usd.peticiones).toHaveLength(1);
+    expect(pen.isDone()).toBe(false);
+  });
+
+  test('CD-T13 Billetera USD 500 al verificar titular → 502 BILLETERA_NO_DISPONIBLE', async () => {
+    const app = crearApp({ manifest: manifest() });
+    await insertarDeposito({ cuenta: BILLETERA_USD_1, moneda: 'USD' });
+    const usd = billetera.consultaUsdFalla(BILLETERA_USD_1, { status: 500 });
+    const pen = trampaPen();
+
+    const res = await get(app, ID);
+
+    esError(res, 502, 'BILLETERA_NO_DISPONIBLE');
+    expect(usd.peticiones).toHaveLength(1);
+    expect(pen.isDone()).toBe(false);
+  });
+});
+
 describe('SPEC-08 consultar-deposito: reglas', () => {
   test('feature consultar-deposito inactiva en el manifest → 404 RUTA_NO_ENCONTRADA; ni BD ni billetera', async () => {
     const app = crearApp({ manifest: manifest({ consultar: 'inactivo' }) });
@@ -331,15 +400,20 @@ describe('SPEC-08 consultar-deposito: reglas', () => {
     expect(consulta.peticiones).toHaveLength(0);
   });
 
-  test('CD-R02 usr-cliente-2 ve un depósito a su cuenta USD 0011-0123-000002', async () => {
+  test('CD-R02 usr-cliente-2 ve un depósito a su billetera USD 22222222-2222-4222-8222-222222222222', async () => {
     const app = crearApp({ manifest: manifest() });
-    await insertarDeposito({ cuenta: CUENTA_USD, moneda: 'USD', usuario: 'usr-cajero-1', canal: 'VENTANILLA' });
-    billetera.cuentaActiva(CUENTA_USD);
+    await insertarDeposito({
+      cuenta: BILLETERA_USD_2, moneda: 'USD', usuario: 'usr-cajero-1', canal: 'VENTANILLA',
+    });
+    const consulta = billetera.billeteraUsdExiste(BILLETERA_USD_2);
 
     const res = await get(app, ID, { usuario: 'usr-cliente-2' });
 
     expect(res.status).toBe(200);
-    expect(res.body).toEqual(cuerpoEsperado({ cuentaDestino: CUENTA_USD, moneda: 'USD', canal: 'VENTANILLA' }));
+    expect(res.body).toEqual(cuerpoEsperado({
+      cuentaDestino: BILLETERA_USD_2, moneda: 'USD', canal: 'VENTANILLA',
+    }));
+    expect(consulta.peticiones).toHaveLength(1);
   });
 
   test('CD-R04 billetera 404 para la cuenta del depósito (null) → 404 DEPOSITO_NO_ENCONTRADO', async () => {

@@ -684,23 +684,30 @@ Umbral 80 % cumplido en `src/core/` y `src/modules/`.
 
 ## SPEC-08
 
-- **Tester** · 2026-11-02 · Feature 8 (`consultar-deposito`).
+- **Tester** · 2026-11-03 · Feature 8 (`consultar-deposito`) · **retrabajo** spec v1.2 (Billetera USD), rama
+  `inte_biUsd`. Sin desarrolladorback: la spec solo añade CD-T10..CD-T13; el enrutamiento PEN/USD lo hace
+  `src/core/clients/billeteraClient.js` (SPEC-02, INT-R10: UUID en minúsculas → Billetera USD).
 - **Ejecución:** `bash init.sh` completo con PostgreSQL real (`deposito_test`) → **`EXIT=0`**.
-  `[OK] SPEC-08: todos sus casos tienen prueba (todo: CD-T07, CD-T08)` · alcance OK (138 archivos) ·
-  `Test Suites: 16 passed, 16 total` · `Tests: 2 todo, 268 passed, 270 total`.
-- Integración: `crearApp({ manifest })` armada **dentro de cada prueba** (pipeline singleton). Manifest a medida
-  con `registrar-deposito` y `consultar-deposito` activos y `limites-por-canal`, `conversion-moneda`, `alerta-uif`
-  inactivas. Depósitos insertados directo en `depositos` (SPEC-08 §6) con cuentas y usuarios de SPEC-02 §4.
-  Billetera con los helpers de nock (`nock.disableNetConnect()`). `limpiar()` en `beforeEach`.
-- **Actualización 2026-11-02 (tester de SPEC-11):** CD-T07 y CD-T08 dejaron de ser `test.todo` y son pruebas
-  reales y verdes. Corrida vigente: `bash init.sh` completo → `EXIT=0`, `[OK] SPEC-08: todos sus casos tienen
-  prueba` · `Test Suites: 21 passed, 21 total` · `Tests: 340 passed, 340 total` (0 todo). El `manifest()` de la
-  suite acepta `conversion` (def. `inactivo`) para activar el módulo real `conversion-moneda`.
-- Para probar CD-R07 sin SPEC-11 se usa el transformador falso de `tests/core/fixtures/` (`fx-transformador-a`,
-  con `leerExtension`), registrado con `registrarFixtures(jest)` como en SPEC-06.
-- `afterEach` espera a que el conteo de `auditoria_depositos` se estabilice: la auditoría escribe tras responder y
-  su INSERT coincidía con el `TRUNCATE` de `limpiar()` de la prueba siguiente → `deadlock detected` (visto en la
-  primera corrida; es un problema de la prueba, no del código).
+  `[OK] SPEC-08: todos sus casos tienen prueba` · alcance OK (178 archivos) · `Test Suites: 23 passed, 23 total` ·
+  `Tests: 1 todo, 396 passed, 397 total` (el único `todo` no es de SPEC-08; SPEC-09 reabierta avisa HD-T09..T12).
+- Integración: `crearApp({ manifest })` dentro de cada prueba; manifest a medida con `registrar-deposito` y
+  `consultar-deposito` activos y `limites-por-canal`, `conversion-moneda` (salvo CD-T07), `alerta-uif` inactivas.
+  Depósitos insertados directo en `depositos` (SPEC-08 §6) con usuarios, cuentas PEN y billeteras USD de SPEC-02 §4.
+  Billetera PEN y USD con los helpers de nock de `tests/helpers/billetera.js` (`nock.disableNetConnect()`).
+  `limpiar()` en `beforeEach`; `afterEach` espera a que se estabilice `auditoria_depositos` antes de la siguiente
+  limpieza (evita el deadlock INSERT de auditoría vs `TRUNCATE`).
+- CD-T10..CD-T13 añaden una "trampa" `nock(config.billetera.url).get(/.*/)` para comprobar que **no** se llama a la
+  billetera PEN (`isDone() === false`); el host USD (`BILLETERA_USD_URL`) es distinto del PEN.
+
+### Pruebas actualizadas por el retrabajo (datos v2.0 de SPEC-02 §4)
+
+| Antes | Ahora |
+|---|---|
+| `CUENTA_USD = '0011-0123-000002'` (hoy es una cuenta **PEN** de `usr-cliente-2`) | Eliminada. Constantes `BILLETERA_USD_1 = '11111111-1111-4111-8111-111111111111'` (titular `usr-cliente-1`) y `BILLETERA_USD_2 = '22222222-2222-4222-8222-222222222222'` (titular `usr-cliente-2`) |
+| `CD-R02 usr-cliente-2 ve un depósito a su cuenta USD 0011-0123-000002` con `billetera.cuentaActiva` (PEN) | `CD-R02 usr-cliente-2 ve un depósito a su billetera USD 22222222-2222-4222-8222-222222222222` con `billetera.billeteraUsdExiste`; además comprueba 1 petición a Billetera USD |
+
+`tests/unit/consultar-deposito/service.test.js` no usaba datos obsoletos (solo `0011-0123-456789` PEN): sin cambios.
+No se tocaron pruebas de otras specs.
 
 ### Casos cubiertos
 
@@ -712,81 +719,67 @@ Umbral 80 % cumplido en `src/core/` y `src/modules/`.
 | CD-T04 `usr-cliente-2` consulta un depósito a `0011-0123-456789` → 404 `DEPOSITO_NO_ENCONTRADO` | idem |
 | CD-T05 `usr-agente-2` consulta un depósito de `usr-agente-1` → 404; billetera no llamada | idem |
 | CD-T06 `usr-agente-1` consulta su propio depósito → 200 cuerpo completo; billetera no llamada | idem |
-| CD-T07 depósito `100.00` USD → `0011-0123-456789` (PEN, `monto_acreditar` `375.00`) con su fila en `tipos_cambio` y en `conversiones_deposito`, conversion-moneda **activa** → 200 con el cuerpo completo y `extensiones: { "conversion-moneda": { monedaCuenta: "PEN", tipoCambio: "3.7500", montoAcreditado: "375.00" } }` | `tests/integration/consultar-deposito/consultar.test.js` |
-| CD-T08 el mismo depósito con conversion-moneda **inactiva** → 200 con `extensiones: {}`; la fila de `conversiones_deposito` sigue ahí | idem |
+| CD-T07 depósito `100.00` USD → `0011-0123-456789` con fila en `conversiones_deposito`, conversion-moneda **activa** → `extensiones.conversion-moneda` = `{ monedaCuenta: "PEN", tipoCambio: "3.7500", montoAcreditado: "375.00" }` | idem |
+| CD-T08 el mismo depósito con conversion-moneda **inactiva** → `extensiones: {}`; la fila de `conversiones_deposito` sigue ahí | idem |
 | CD-T09 `usr-cliente-1` y billetera 500 → 502 `BILLETERA_NO_DISPONIBLE` | idem |
+| CD-T10 `usr-cliente-1` consulta un depósito a `11111111-1111-4111-8111-111111111111` → 200 con cuerpo completo (`cuentaDestino` = UUID, `moneda` USD); 1 `GET /api/v1/billetera/wallets/{id}` a Billetera USD con el `X-Correlation-Id`; la billetera PEN **no** se llama | idem |
+| CD-T11 `usr-cliente-2` consulta un depósito a `11111111-…` (titular `usr-cliente-1`) → 404 `DEPOSITO_NO_ENCONTRADO` con el mensaje de §5; 1 llamada USD, 0 PEN | idem |
+| CD-T12 Billetera USD 404 (`ApiError NOT_FOUND`) al verificar titular → 404 `DEPOSITO_NO_ENCONTRADO` (CD-R04); 0 PEN | idem |
+| CD-T13 Billetera USD 500 al verificar titular → 502 `BILLETERA_NO_DISPONIBLE`; 0 PEN | idem |
 
-Pruebas adicionales por regla (todas ✅):
+Pruebas adicionales por regla (todas en verde):
 
 - **Feature activa/inactiva:** `consultar-deposito` `inactivo` → 404 `RUTA_NO_ENCONTRADA`, ni BD ni billetera.
 - **CD-R01:** `123`, UUID con un carácter de más, caracteres no hex → 400.
 - **CD-R02:** cliente titular ve un depósito registrado por `usr-cajero-1`; `usr-cajero-1` ve el suyo sin billetera y
-  `usr-agente-1` no lo ve; `usr-cliente-2` ve un depósito a su cuenta USD `0011-0123-000002`. Unitaria: un CLIENTE cuyo
-  id coincide con `usuario_id` no entra por la 1ª condición (requiere rol AGENTE/CAJERO).
+  `usr-agente-1` no lo ve; `usr-cliente-2` ve un depósito a su billetera USD `22222222-…`. Unitaria: un CLIENTE cuyo
+  id coincide con `usuario_id` no entra por la 1ª condición.
 - **CD-R03:** usuario sin roles o sin usuario → 404 sin billetera (unitaria).
-- **CD-R04:** billetera 404 (`null`) → 404 `DEPOSITO_NO_ENCONTRADO` (integración y unitaria).
+- **CD-R04:** billetera 404 (`null`) → 404 (PEN en integración y unitaria; USD en CD-T12).
 - **CD-R05:** el 404 "sin permiso" tiene el mismo cuerpo que el 404 "no existe"; nunca `SIN_PERMISO`.
-- **CD-R06:** billetera sin responder a tiempo → 502; el `ErrorApp` de billetera se propaga tal cual (unitaria).
-- **CD-R07:** PENDIENTE/PROCESANDO/FALLIDO se devuelven con su estado; extensión falsa **activa** con datos → aparece
-  en `extensiones` y `leerExtension` recibe el id; **inactiva** → `extensiones: {}` sin tocar el módulo; activa sin
-  datos (`null`) → sin su clave; sin permiso → `leerExtensiones` no se llama; unitaria: respuesta =
-  `aJson(fila, leerExtensiones(id, contexto))`.
+- **CD-R06:** billetera sin responder a tiempo → 502; el `ErrorApp` se propaga tal cual (unitaria); USD 500 en CD-T13.
+- **CD-R07:** estados PENDIENTE/PROCESANDO/FALLIDO tal cual; extensión falsa activa/inactiva/sin datos; sin permiso
+  no lee extensiones; unitaria: respuesta = `aJson(fila, leerExtensiones(id, contexto))`.
 - **§2 repository solo SELECT:** `buscarPorId` devuelve la fila o `null`; la fila no cambia tras consultar.
-- **AUD-R06 (arrastre SPEC-04/05):** 200 → fila `CONSULTAR_DEPOSITO` `EXITO` con `deposito_id`; 404 por falta de
-  permiso → `ERROR_404` con `deposito_id` nulo (no se revela el id).
+- **AUD-R06:** 200 → `CONSULTAR_DEPOSITO` `EXITO` con `deposito_id`; 404 sin permiso → `ERROR_404` sin `deposito_id`.
 - `index.js` cumple el contrato de endpoint de SPEC-06 §4.
 
-### Decisiones de `progress/impl_08.md` (todas ✅)
+### Decisiones de `progress/impl_08.md` (todas en verde)
 
 | Decisión | Pruebas | Archivo |
 |---|---|---|
-| 1. `contexto.cuenta = null` si el operador que lo registró consulta (sin billetera); con CLIENTE titular = la cuenta devuelta por billetera. También se comprueban `usuario`, `correlationId`, `db = pool` y `logger` | 2 | `tests/integration/consultar-deposito/consultar.test.js` |
-| 2. Varios roles: AGENTE+CLIENTE que lo registró → 200 sin billetera; CAJERO+CLIENTE titular que no lo registró → consulta billetera y 200; AGENTE+CLIENTE ni registrador ni titular → 404 tras consultar billetera | 3 | `tests/unit/consultar-deposito/service.test.js` (usuarios de SPEC-02 §4 con un rol extra, mismo precedente que SEG-R13) |
-
-### Arrastres de SPEC-07 cerrados
-
-- `"10.100"` → 422 `MONTO_INVALIDO`, sin billetera ni transacción: `RD-R03 monto "10.100" …` en
-  `tests/unit/registrar-deposito/service.test.js` ✅.
-- `## SPEC-00`, `## SPEC-03`, `## SPEC-04` y `## SPEC-05` actualizadas: ya no listan como `todo` PRY-T01, SEG-T06,
-  AUD-T01/T02/T04, IDE-T02..T08 ni IDE-T10 (todas pruebas reales desde SPEC-06/07).
+| 1. `contexto.cuenta = null` si el operador que lo registró consulta; con CLIENTE titular = la cuenta devuelta por billetera | 2 | `tests/integration/consultar-deposito/consultar.test.js` |
+| 2. Varios roles (AGENTE+CLIENTE, CAJERO+CLIENTE) | 3 | `tests/unit/consultar-deposito/service.test.js` |
 
 ### Casos en `test.todo`
 
-Ninguno (estado vigente, 2026-11-02). CD-T07 y CD-T08 esperaban SPEC-11 y se convirtieron en pruebas reales al
-probar SPEC-11 (ver `## SPEC-11`). No había `test.todo` anteriores que esperaran SPEC-08.
+Ninguno de SPEC-08. No había `test.todo` que esperaran SPEC-08.
 
 ### Pruebas fallidas
 
-Ninguna.
+Ninguna. CD-T10..CD-T13 pasan sin cambios en `src/` (el `consultarCuenta` de SPEC-02 enruta por UUID).
+Nota sobre la referencia `Busti:codigo/tests/unit/consultar-deposito/service.test.js`: allí CD-T10..T13 son
+unitarias con `consultarCuenta` mockeado, así que no pueden comprobar la ruta HTTP llamada que exige CD-T10; aquí los
+cuatro casos son de integración con nock y billeteras USD de SPEC-02 §4.
 
 ### Cobertura (`src/core/` y `src/modules/`)
 
 ```
-----------------------------|---------|----------|---------|---------|-------------------
-File                        | % Stmts | % Branch | % Funcs | % Lines | Uncovered Line #s
-----------------------------|---------|----------|---------|---------|-------------------
-All files                   |   99.62 |    94.83 |   98.98 |   99.79 |
- core                       |   98.93 |    92.98 |   97.14 |   99.42 |
- core/clients               |     100 |    92.85 |     100 |     100 |
- core/middlewares           |     100 |    94.87 |     100 |     100 |
- core/repositories          |     100 |     87.5 |     100 |     100 |
- core/tareas                |     100 |      100 |     100 |     100 |
- modules/consultar-deposito |     100 |      100 |     100 |     100 |
-  controller.js             |     100 |      100 |     100 |     100 |
-  index.js                  |     100 |      100 |     100 |     100 |
-  repository.js             |     100 |      100 |     100 |     100 |
-  routes.js                 |     100 |      100 |     100 |     100 |
-  service.js                |     100 |      100 |     100 |     100 |
- modules/registrar-deposito |     100 |      100 |     100 |     100 |
-----------------------------|---------|----------|---------|---------|-------------------
-Test Suites: 16 passed, 16 total
-Tests:       2 todo, 268 passed, 270 total
+-----------------------------|---------|----------|---------|---------|
+File                         | % Stmts | % Branch | % Funcs | % Lines |
+-----------------------------|---------|----------|---------|---------|
+All files                    |   99.72 |     95.1 |   99.23 |   99.84 |
+ core                        |   99.46 |    94.73 |   97.14 |   99.42 |
+ core/clients                |     100 |    95.12 |     100 |     100 |
+ core/middlewares            |     100 |    94.87 |     100 |     100 |
+ core/repositories           |     100 |     87.5 |     100 |     100 |
+ modules/consultar-deposito  |     100 |      100 |     100 |     100 |
+-----------------------------|---------|----------|---------|---------|
+Test Suites: 23 passed, 23 total
+Tests:       1 todo, 396 passed, 397 total
 ```
 
-- `src/modules/`: de **65,51 %** (`consultar-deposito` al 0 %, umbral en rojo según `progress/impl_08.md`) a **100 %**
-  en stmts, branches, funcs y lines (≥ 80 %).
-- `src/core/`: 99,62 % stmts · 94,83 % branches (≥ 80 %).
-- Corrida vigente (SPEC-11): `modules/consultar-deposito` 100 % en las cuatro métricas; ver `## SPEC-11`.
+Todo por encima del 80 %.
 
 ## SPEC-09
 

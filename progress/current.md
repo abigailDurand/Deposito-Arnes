@@ -79,3 +79,5 @@ SPEC-01 (dev → revisor). Luego SPEC-02 con `Busti:codigo/` como referencia.
     (3) mantener armarContexto con logger/db y montoValido sobre string; (4) init.sh; (5) `progress/impl_07.md`.
 - SPEC-07 dev (retrabajo): schema.js + service.js. `init.sh` verde 380 + 1 todo; avisa RD-T13..T18 sin prueba. Siguiente: tester.
 - SPEC-07: dev → tester → revisor APROBADO (`progress/review_07.md`). Leader: init.sh 392 + 1 todo.
+- SPEC-08 → `in_progress` (spec solo añade CD-T10..T13: tester → revisor, sin dev).
+- SPEC-08: tester → revisor APROBADO (`progress/review_08.md`). Leader: init.sh 396 + 1 todo.
