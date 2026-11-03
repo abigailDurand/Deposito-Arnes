@@ -783,20 +783,37 @@ Todo por encima del 80 %.
 
 ## SPEC-09
 
-- **Tester** · 2026-11-02 · Feature 9 (`historial-depositos`).
+- **Tester** · 2026-11-03 · Feature 9 (`historial-depositos`) · **retrabajo spec v1.2** (Billetera
+  USD), rama `inte_biUsd`.
 - **Ejecución:** `bash init.sh` completo con PostgreSQL real (`deposito_test`) → **`EXIT=0`**.
-  `[OK] SPEC-09: todos sus casos tienen prueba` · alcance OK (147 archivos) ·
-  `Test Suites: 17 passed, 17 total` · `Tests: 2 todo, 299 passed, 301 total`.
+  `[OK] SPEC-09: todos sus casos tienen prueba` · alcance OK (178 archivos) ·
+  `Test Suites: 23 passed, 23 total` · `Tests: 1 todo, 402 passed, 403 total`.
 - Integración: `crearApp({ manifest })` dentro de cada prueba con manifest a medida
   (`registrar-deposito`, `consultar-deposito` e `historial-depositos` activos; `limites-por-canal`,
   `conversion-moneda`, `alerta-uif` inactivas). Depósitos insertados directo en `depositos`
-  (SPEC-09 §6) con cuentas y usuarios de SPEC-02 §4. Billetera con los helpers de nock
-  (`nock.disableNetConnect()`). `limpiar()` en `beforeEach`.
-- `creado_en` se inserta explícito en milisegundos (nota de `progress/impl_09.md` para HD-T05):
-  el valor de `desde`/`hasta` coincide exactamente con el guardado.
-- Arrastre de la revisión de SPEC-08 aplicado: `afterEach` espera a que el conteo de
-  `auditoria_depositos` se estabilice antes del `TRUNCATE` de `limpiar()` (mismo patrón que
-  `consultar.test.js`); todas las líneas del archivo ≤ 100 caracteres.
+  (SPEC-09 §6) con cuentas, billeteras USD y usuarios de SPEC-02 §4. Billetera PEN y USD con los
+  helpers de nock (`nock.disableNetConnect()`). `limpiar()` en `beforeEach`; `afterEach` espera a
+  que el conteo de `auditoria_depositos` se estabilice antes del `TRUNCATE` siguiente.
+- Para probar que una billetera **no** se llamó se registra en el archivo de prueba un espía
+  `persist()` sobre cualquier GET a `config.billetera.url` (PEN) o `config.billeteraUsd.url` (USD);
+  no se tocaron los helpers.
+
+### Cambios del retrabajo (actualizado/eliminado, no solo añadido)
+
+- Eliminada la constante `CUENTA_USD = '0011-0123-000002'`: según SPEC-02 §4 v2.0 esa cuenta es
+  **PEN** de `usr-cliente-2`. Sustituida por `CUENTA_2` (PEN) y `WALLET_USD` / `WALLET_USD_2`
+  (`11111111-…`, `22222222-…`).
+- **HD-T02** reescrita: `usr-cliente-2` pide su billetera USD `22222222-2222-4222-8222-222222222222`
+  (helper `billeteraUsdExiste`) sin depósitos (hay depósitos en otras cuentas) →
+  `{ datos: [], pagina: 1, tamano: 20, total: 0 }`, Billetera USD consultada 1 vez.
+- **HD-R04 (cajero)**: el depósito "de otra cuenta" pasa de `0011-0123-000002`/USD a
+  `11111111-…`/USD.
+- **HD-R05 (cliente ve los de cualquier operador)**: ahora en `0011-0123-000002` como cuenta PEN
+  (moneda PEN), con `cuentaActiva`.
+- Referencia `Busti`: su HD-T11 usa `WALLET_USD.toUpperCase()`, pero `11111111-…` solo tiene
+  dígitos y en mayúsculas es idéntico (UUID válido → billetera llamada → 502). Era un error de la
+  prueba, no del código. Aquí se usa el UUID del ejemplo de SPEC-02 §4 en mayúsculas
+  (`3FA85F64-5717-4562-B3FC-2C963F66AFA6`) y uno con una sola letra hex en mayúscula.
 
 ### Casos cubiertos
 
@@ -804,42 +821,37 @@ Todos en `tests/integration/historial-depositos/historial.test.js`.
 
 | Caso | Qué comprueba |
 |---|---|
-| HD-T01 | `usr-cliente-1`, 3 depósitos → 200 con el cuerpo exacto de §5 (`pagina 1`, `tamano 20`, `total 3`), orden del más reciente al más antiguo, ningún elemento con `extensiones`; billetera consultada 1 vez con el `X-Correlation-Id` |
-| HD-T02 | `usr-cliente-2` en su cuenta USD sin depósitos (hay depósitos en otra cuenta) → `{ datos: [], pagina: 1, tamano: 20, total: 0 }` |
-| HD-T03 | 25 depósitos, `pagina=2&tamano=20` → los 5 más antiguos en orden, `total 25` |
-| HD-T04 | `estado=FALLIDO` con 6 depósitos de los 4 estados → solo los 3 FALLIDOS, `total 3` |
-| HD-T05 | `desde` = `creado_en` exacto del 2º depósito → incluido (2 elementos, `total 2`) |
-| HD-T06 | `usr-cliente-2` pide `0011-0123-456789` → 403 `SIN_PERMISO` con el mensaje de §5; billetera consultada; `repository.listar` no llamado |
-| HD-T07 | `tamano=500`, `pagina=0`, `desde > hasta` → 400 `FORMATO_INVALIDO` cada uno; ni billetera ni `repository.listar` |
-| HD-T08 | `usr-agente-1` con depósitos suyos y de `usr-agente-2` → solo los 2 suyos, `total 2`; billetera sin peticiones |
+| HD-T01 | `usr-cliente-1`, 3 depósitos → 200 con el cuerpo exacto de §5, más reciente primero, sin `extensiones`; billetera PEN consultada 1 vez con el `X-Correlation-Id` |
+| HD-T02 | `usr-cliente-2`, `22222222-2222-4222-8222-222222222222` sin depósitos → `datos: []`, `total: 0`; Billetera USD consultada 1 vez |
+| HD-T03 | 25 depósitos, `pagina=2&tamano=20` → los 5 más antiguos, `total 25` |
+| HD-T04 | `estado=FALLIDO` → solo los 3 FALLIDOS, `total 3` |
+| HD-T05 | `desde` = `creado_en` exacto → incluido |
+| HD-T06 | `usr-cliente-2` pide `0011-0123-456789` → 403 `SIN_PERMISO` con el mensaje de §5; `repository.listar` no llamado |
+| HD-T07 | `tamano=500`, `pagina=0`, `desde > hasta` → 400 `FORMATO_INVALIDO`; ni billetera ni BD |
+| HD-T08 | `usr-agente-1` → solo los suyos; billetera sin peticiones |
+| HD-T09 | `usr-cliente-1`, `11111111-…` con 2 depósitos (y uno en otra cuenta) → 200 con los 2 (`moneda USD`, `cuentaDestino` UUID), sin `extensiones`; Billetera USD consultada 1 vez con el `X-Correlation-Id`; billetera PEN **0** peticiones |
+| HD-T10 | `usr-cliente-2` pide `11111111-…` → 403 `SIN_PERMISO` con el mensaje de §5; USD consultada, PEN no; `repository.listar` no llamado |
+| HD-T11 | `3FA85F64-…` (mayúsculas), `…11111111111A`, `11111111-1111-4111-8111`, último grupo de 11, UUID sin guiones → 400 `FORMATO_INVALIDO` cada uno; ni Billetera USD ni PEN ni `repository.listar` |
+| HD-T12 | Billetera USD 500 al verificar titular → 502 `BILLETERA_NO_DISPONIBLE`; PEN no llamada; `repository.listar` no llamado |
 
 Pruebas adicionales por regla (todas ✅):
 
 - **Feature activa/inactiva:** `historial-depositos` `inactivo` → 404 `RUTA_NO_ENCONTRADA`, ni BD ni billetera.
-- **HD-R01:** números con un dígito de menos/más, con letra, `abc` → 400 sin billetera ni BD.
-- **HD-R02:** valores por defecto (`pagina 1`, `tamano 20`: 20 de 25); límites válidos `tamano=1`
-  y `tamano=100`; inválidos `tamano=0|101`, `pagina=-1|1.5|abc`, `estado=OTRO|fallido`,
-  `desde=ayer`, `hasta` con mes 13 → 400; `desde = hasta` es válido.
-- **HD-R03:** `hasta` igual al `creado_en` → incluido; rango `desde..hasta` inclusivo en ambos extremos.
-- **HD-R04:** `usr-cajero-1` solo ve los suyos de esa cuenta (no los de otra cuenta ni de otro
-  operador), sin billetera; operador sin depósitos propios → lista vacía.
-- **HD-R05:** cliente ve los de su cuenta registrados por cualquier operador; billetera 404 → 403;
-  billetera 500 y timeout → 502 `BILLETERA_NO_DISPONIBLE`; cuenta propia BLOQUEADA → 200 (HD-R05
-  solo exige titularidad).
-- **HD-R06:** empate en `creado_en` → `id DESC`; `LIMIT`/`OFFSET` como parámetros (`[7, 14]` con
-  `pagina=3&tamano=7`, sin interpolar en el SQL).
-- **HD-R07:** filtros combinados (estado + rango + operador + página) → `total` = 4 coherente con la
-  lista; página fuera de rango → `datos: []` con el total real; `repository.listar`/`contar` directos.
-- **HD-R08:** con una extensión falsa activa con datos (`fx-transformador-a`), la lista sigue sin
-  `extensiones` y `pipeline.leerExtensiones`/`leerExtension` no se llaman.
-- **§2 solo SELECT:** la tabla `depositos` no cambia tras listar.
-- **AUD-R06:** 200 → fila `LISTAR_DEPOSITOS` `EXITO` (`deposito_id` nulo); 403 → `ERROR_403`.
-- `index.js` cumple el contrato de endpoint de SPEC-06 §4.
+- **HD-R01:** números PEN con un dígito de menos/más, con letra, `abc` → 400 sin billetera ni BD.
+- **HD-R02:** valores por defecto; límites `tamano=1|100`; inválidos → 400; `desde = hasta` válido.
+- **HD-R03:** `hasta` inclusivo; rango inclusivo en ambos extremos.
+- **HD-R04:** cajero solo ve los suyos de esa cuenta; operador sin propios → lista vacía;
+  `usr-agente-1` en billetera USD → solo los suyos, ni Billetera USD ni PEN llamadas.
+- **HD-R05:** cliente ve los de su cuenta de cualquier operador; billetera PEN 404 → 403; Billetera
+  USD 404 → 403; PEN 500 y timeout → 502; cuenta propia BLOQUEADA → 200.
+- **HD-R06:** empate → `id DESC`; `LIMIT`/`OFFSET` como parámetros.
+- **HD-R07:** `total` coherente con filtros combinados; página fuera de rango; `listar`/`contar` directos.
+- **HD-R08:** con extensión activa con datos, la lista sigue sin `extensiones` y no las lee.
+- **§2 solo SELECT**, **AUD-R06** (`LISTAR_DEPOSITOS` EXITO / ERROR_403) y contrato de `index.js`.
 
 ### Casos en `test.todo`
 
-Ninguno de SPEC-09. No había `test.todo` anteriores que esperaran SPEC-09 (siguen CD-T07/CD-T08,
-que esperan SPEC-11).
+Ninguno de SPEC-09. No hay `test.todo` anteriores que esperen SPEC-09.
 
 ### Pruebas fallidas
 
@@ -851,25 +863,23 @@ Ninguna.
 -----------------------------|---------|----------|---------|---------|-------------------
 File                         | % Stmts | % Branch | % Funcs | % Lines | Uncovered Line #s
 -----------------------------|---------|----------|---------|---------|-------------------
-All files                    |   99.51 |    94.89 |    99.1 |   99.82 |
- core                        |   98.93 |    93.85 |   97.14 |   99.42 |
- modules/consultar-deposito  |     100 |      100 |     100 |     100 |
- modules/historial-depositos |   98.68 |     91.3 |     100 |     100 |
+All files                    |   99.72 |     95.1 |   99.23 |   99.84 |
+ core                        |   99.46 |    94.73 |   97.14 |   99.42 |
+ core/clients                |     100 |    95.12 |     100 |     100 |
+ modules/historial-depositos |    98.7 |     91.3 |     100 |     100 |
   controller.js              |     100 |      100 |     100 |     100 |
   index.js                   |     100 |      100 |     100 |     100 |
   repository.js              |     100 |      100 |     100 |     100 |
   routes.js                  |     100 |      100 |     100 |     100 |
   schema.js                  |     100 |      100 |     100 |     100 |
   service.js                 |   95.65 |       75 |     100 |     100 | 13,31
- modules/registrar-deposito  |     100 |      100 |     100 |     100 |
 -----------------------------|---------|----------|---------|---------|-------------------
-Test Suites: 17 passed, 17 total
-Tests:       2 todo, 299 passed, 301 total
+Test Suites: 23 passed, 23 total
+Tests:       1 todo, 402 passed, 403 total
 ```
 
-- Todo ≥ 80 %. Ramas sin cubrir en `service.js`: 13 (`roles` que no es arreglo) y 31 (operador
-  sin `id` → 403 defensivo). Son defensivas: los tokens de SPEC-02 §4 siempre traen `sub` y
-  `roles`, así que no se alcanzan por HTTP con los datos de prueba permitidos.
+- Todo ≥ 80 %. Ramas sin cubrir en `service.js`: 13 (`roles` no arreglo) y 31 (operador sin `id`),
+  defensivas: los tokens de SPEC-02 §4 siempre traen `sub` y `roles`.
 
 ## SPEC-10
 

@@ -1,84 +1,55 @@
-# Review — SPEC-09 historial-depositos
+# Review — SPEC-09 historial-depositos (RETRABAJO, spec v1.2, Billetera USD)
 
-**Veredicto:** APROBADO CON OBSERVACIONES
+**Veredicto:** APROBADO
 
-- **Revisor** · 2026-11-02 · Feature 9 (`historial-depositos`).
-- Insumos: `progress/impl_09.md`, `tests/reporte.md` §SPEC-09, `bash init.sh` completo con PostgreSQL.
+Retrabajo según AGENTS.md §5 "Reabrir features". Rama `inte_biUsd`. Revisado: `git diff` de
+`src/modules/historial-depositos/schema.js` y `tests/integration/historial-depositos/historial.test.js`,
+`progress/impl_09.md`, sección `## SPEC-09` (retrabajo) de `tests/reporte.md`.
 
-## Alcance (§2)
-
-- [x] Archivos nuevos solo en `src/modules/historial-depositos/` (index, routes, schema, controller,
-  service, repository) y `tests/integration/historial-depositos/historial.test.js`. Todos en §2.
-- [x] `git status`: `src/core/` intacto (PRY-R05); ningún otro módulo tocado; `specs-v2/` intacto.
-
-## Reglas del proyecto
-
-- [x] PRY-R01 — `routes.js:11-15` → `controller.listar` → `service.listar` → `repository` / `billeteraClient`. Sin saltos.
-- [x] PRY-R02 — `controller.js:8-21` solo valida con zod (→ `FORMATO_INVALIDO`), llama al service y responde 200.
-- [x] PRY-R03 — `service.js` no tiene SQL ni HTTP; usa `repository.listar/contar` y `billeteraClient.consultarCuenta`.
-- [x] PRY-R04 — `service.js:3-8` solo importa `src/core/*` y `./repository`. No lee tablas de otros módulos (solo `depositos`).
-- [x] PRY-R05 — `src/core/` sin cambios (la acción `LISTAR_DEPOSITOS` ya existía en `core/middlewares/auditoria.js:14`, SPEC-04).
-- [x] PRY-R06/R07 — no hay aritmética de dinero; `monto` sale de `aJson` (`core/depositoMapper.js:16`, `Decimal.toFixed(2)`). `parseInt`/`Number.MAX_SAFE_INTEGER` en `schema.js:14,24` son paginación, no dinero.
-- [x] PRY-R08 — `repository.js:5-19` arma solo condiciones fijas con `$n`; valores en arreglo. `LIMIT $n OFFSET $m` parametrizados (`repository.js:27-28`).
-- [x] PRY-R09 — sin URLs ni secretos (Grep `http://` en `src/`: 0 resultados).
-- [x] PRY-R10 — el módulo no loguea (Grep `console.log`: 0).
-- [x] PRY-R11 — no aplica (sin `[POR ACORDAR]`).
-- [x] PRY-R12 — `specs-v2/` intacto (hash OK en `init.sh`).
-
-## Reglas de la spec
-
-- [x] HD-R01 — `schema.js:8` regex `^\d{4}-\d{4}-\d{6}$`; `controller.js:10` → 400 antes de billetera/BD.
-- [x] HD-R02 — `schema.js:11-31`: `pagina` ≥ 1 def. 1, `tamano` 1..100 def. 20, `estado` enum de los 4, `desde`/`hasta` `datetime({ offset: true })`, `refine` desde ≤ hasta.
-- [x] HD-R03 — `repository.js:16-17` `creado_en >=` / `creado_en <=`.
-- [x] HD-R04 — `service.js:29-32` AGENTE/CAJERO → `usuario_id` propio, sin billetera.
-- [x] HD-R05 — `service.js:33-37` solo CLIENTE → `consultarCuenta` + `esTitular`; `null` → 403; 5xx/timeout → 502 propagado por el client.
-- [x] HD-R06 (§6 revisor) — `repository.js:26-28` `ORDER BY creado_en DESC, id DESC LIMIT $n+1 OFFSET $n+2`; prueba de empate y prueba que verifica valores `[7, 14]` como parámetros.
-- [x] HD-R07 (§6 revisor) — `listar` y `contar` usan la misma `armarWhere` con el mismo objeto `criterios` (`service.js:39-42`); `contar` sin LIMIT/OFFSET. Prueba con filtros combinados.
-- [x] HD-R08 (§6 revisor) — `service.js:45` `aJson(fila)` sin segundo argumento → sin clave `extensiones` (`depositoMapper.js:24`); no llama a `pipeline.leerExtensiones` (verificado con extensión activa con datos).
-
-## Contrato §5
-
-- [x] `GET /api/v1/cuentas/:numero/depositos`, 200 `{ datos, pagina, tamano, total }` con `pagina/tamano/total` numéricos; elementos con los campos de §5 (HD-T01 compara cuerpo exacto).
-- [x] 400 `FORMATO_INVALIDO`, 401 (core), 403 `SIN_PERMISO` con mensaje de §5, 502 `BILLETERA_NO_DISPONIBLE`.
-
-## Decisiones del desarrollador (sin escalar)
-
-- CLIENTE+AGENTE → rama operador: coincide con HD-R04 ("si tiene rol AGENTE o CAJERO") y §3 ("CLIENTE (y no AGENTE ni CAJERO)"). Correcta.
-- `desde`/`hasta` exigen fecha-hora con zona: lectura válida de "fecha-hora ISO 8601" de HD-R02; el ejemplo de §5 usa `Z`. Aceptada.
-- Query desconocida ignorada: la spec no la prohíbe. Aceptada.
-- Operador sin `id` → 403: ver observación 1.
+## Reglas
+- [x] HD-R01 — `schema.js:8` `RE_NUMERO` = `^(?:\d{4}-\d{4}-\d{6}|[0-9a-f]{8}-…-[0-9a-f]{12})$`, sin flag `i`;
+      idéntica carácter a carácter a `RE_CUENTA` de `registrar-deposito/schema.js:7` (RD-R02). Falla → `controller.js` lanza `FORMATO_INVALIDO` (400) antes del service.
+- [x] HD-R02/R03 — sin cambios respecto a la versión aprobada (`schema.js` query, `repository.js` `>=`/`<=`).
+- [x] HD-R04 — `service.js:29-32` AGENTE/CAJERO filtran por `usuario_id`, sin llamar a billetera.
+- [x] HD-R05 — `service.js:35-36` `consultarCuenta` (enruta PEN/USD en `billeteraClient` de SPEC-02) + `esTitular`; null → 403; 5xx → 502.
+- [x] HD-R06 — `repository.js:26-27` `ORDER BY creado_en DESC, id DESC LIMIT $n+1 OFFSET $n+2` con parámetros.
+- [x] HD-R07 — `repository.js:34-41` `contar` reutiliza `armarWhere` (mismos filtros que `listar`).
+- [x] HD-R08 — `service.js:45` `aJson(fila)` sin `extensiones`; ningún acceso a tablas de extensiones.
+- [x] PRY-R01..R04 — capas respetadas; solo se modificó `schema.js` (en §2).
+- [x] PRY-R06/R07 — sin `Number(`/`parseFloat` en el módulo (el `parseInt` de `schema.js` es para paginación, no dinero).
+- [x] PRY-R08 — SQL parametrizado; solo se arman condiciones de una lista fija.
+- [x] PRY-R09/R10 — sin `console.*`, sin URLs ni secretos en el módulo.
+- [x] PRY-R12 — `specs-v2/` intacto (init.sh).
 
 ## Casos de prueba
-
-- [x] HD-T01 … HD-T08 (8/8 reales, con aserciones de cuerpo exacto, orden, `total`, llamadas a billetera y a `repository.listar`).
-- [x] Pruebas extra por regla HD-R01..R08, feature ACTIVA/INACTIVA, auditoría `LISTAR_DEPOSITOS`.
-- Sin `.skip`/`.only`; `limpiar()` en `beforeEach`; PostgreSQL real + nock con `disableNetConnect`.
+- [x] HD-T01 … HD-T12 (12/12 reales, con aserciones de cuerpo exacto / códigos / peticiones nock).
+  - HD-T02 reescrita: `usr-cliente-2` con `22222222-2222-4222-8222-222222222222` (`billeteraUsdExiste`), cuerpo exacto `{ datos: [], pagina: 1, tamano: 20, total: 0 }` y 1 petición a USD.
+  - HD-T09: 2 depósitos en `11111111-…` + 1 en otra cuenta → cuerpo exacto con 2; USD 1 petición con `X-Correlation-Id`; espía PEN `persist()` con 0 peticiones.
+  - HD-T10: 403 con mensaje de §5; USD consultada, PEN no; `repository.listar` no llamado.
+  - HD-T11: UUID en mayúsculas (`3FA85F64-…`), una letra mayúscula, incompletos y sin guiones → 400; espías USD y PEN con 0 peticiones; `listar` no llamado. Correcta la observación de que `11111111-…` en mayúsculas no cambia.
+  - HD-T12: USD 500 → 502 `BILLETERA_NO_DISPONIBLE`; PEN no; `listar` no llamado.
+- [x] Pruebas obsoletas actualizadas: eliminada `CUENTA_USD = '0011-0123-000002'` (es PEN en SPEC-02 v2.0); pruebas HD-R04 (cajero) y HD-R05 (cliente ve cualquier operador) adaptadas a `WALLET_USD` / `CUENTA_2` PEN.
+- [x] Pruebas adicionales: HD-R04 en billetera USD (ninguna billetera llamada), HD-R05 USD 404 → 403.
+- [x] Limpieza de BD: `afterEach` llama a `esperarAuditoria()` (espera a que el conteo de `auditoria_depositos` se estabilice) antes del `TRUNCATE` de `limpiar()` en el `beforeEach` siguiente.
 
 ## Checkpoints
+- C1: [x]  C2: [x]  C3: [x]  C4: [x]  C5: [x] (cobertura módulo 98.7 % stmts / 91.3 % branch; global > 80 %)
 
-- C1: [x]  C2: [x]  C3: [x]  C4: [x]  C5: [x] (cobertura `modules/historial-depositos` 98.68 % stmts / 100 % líneas; reporte completo)
+## Observaciones (no bloquean; no incumplen regla de spec)
+1. `feature_list.json` (feature 9, `acceptance`) sigue diciendo "HD-T01 a HD-T08 pasan"; la spec v1.2 llega a HD-T12. Corresponde al leader actualizarlo.
 
-## Observaciones (no incumplen reglas de spec)
-
-1. `src/modules/historial-depositos/service.js:31` — 403 `SIN_PERMISO` si un operador no trae `id`. La spec no define el caso; es inalcanzable con tokens de SPEC-03 (`sub` obligatorio) y no cambia el contrato. Si se quiere evitar código defensivo no pedido (PRY-R12), puede eliminarse en una spec futura; queda sin cubrir por pruebas (rama 31).
-2. `src/modules/historial-depositos/service.js:12-15` — `tieneRol` duplica la lectura de `roles` que hace `core/permisos.js` (`rolesDe`, no exportada). Aceptable porque PRY-R05 impide tocar el core; anotarlo por si un futuro cambio del core expone el helper.
-
-## Salida de `bash init.sh`
-
+## Salida de `bash init.sh` (completo, PostgreSQL real)
 ```
-Test Suites: 17 passed, 17 total
-Tests:       2 todo, 299 passed, 301 total
-[OK]    Todas las pruebas en verde (unitarias + integración)
-[OK]    Entorno listo. Puedes empezar a trabajar.
+[OK] specs-v2/ intacto (15 archivos)
+[OK] SPEC-09: todos sus casos tienen prueba
+[OK] Alcance de archivos correcto (178 archivos revisados)
+Test Suites: 23 passed, 23 total
+Tests:       1 todo, 402 passed, 403 total
+[OK] Todas las pruebas en verde (unitarias + integración)
+[OK] Entorno listo. Puedes empezar a trabajar.
 EXIT=0
 ```
 
-Tras marcar la feature 9 como `done` en `feature_list.json`, `bash init.sh` de nuevo:
-
-```
-[OK]    SPEC-09: todos sus casos tienen prueba
-Test Suites: 17 passed, 17 total
-Tests:       2 todo, 299 passed, 301 total
-[OK]    Entorno listo. Puedes empezar a trabajar.
-EXIT=0
-```
+## Confirmación tras marcar `done`
+Feature 9 → `status: "done"` (se conserva `retrabajo: true`). Segunda corrida de `bash init.sh`:
+`EXIT=0` · `in_progress=0 done=11 reabierta=2` · `Test Suites: 23 passed` · `Tests: 1 todo, 402 passed, 403 total` · "Entorno listo".
