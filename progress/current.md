@@ -86,3 +86,5 @@ SPEC-01 (dev → revisor). Luego SPEC-02 con `Busti:codigo/` como referencia.
 - SPEC-09: dev → tester → revisor APROBADO (`progress/review_09.md`). Leader: init.sh 402 + 1 todo.
 - SPEC-11 → `in_progress` (solo pruebas: tester → revisor).
 - SPEC-11: tester → revisor APROBADO (`progress/review_11.md`). Leader: init.sh 406/406, sin todo.
+- SPEC-12 → `in_progress` (solo pruebas: tester → revisor).
+- SPEC-12: tester → revisor APROBADO (`progress/review_12.md`). Leader: init.sh 409/409.

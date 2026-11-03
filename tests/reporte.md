@@ -1035,23 +1035,26 @@ Umbral 80 % cumplido en `src/core/` y `src/modules/`.
 
 ## SPEC-12
 
-- **Tester** · 2026-11-02 · Feature 12 (`alerta-uif`).
-- **Ejecución:** `bash init.sh` completo, en primer plano, con PostgreSQL real (`deposito_test`) →
-  `Test Suites: 23 passed, 23 total` · `Tests: 355 passed, 355 total` (0 todo) ·
-  `[OK] Todas las pruebas en verde (unitarias + integración)` · `[OK] Entorno listo`.
-  `bash init.sh --rapido` ya no avisa de casos UIF sin prueba.
-- **SQL nuevo:** `tests/setup/globalSetup.js` (proyecto `integration`) hace
-  `DROP SCHEMA public CASCADE` y aplica todos los `db/*.sql` en orden alfabético, así que
-  `db/12-alerta-uif.sql` se aplica después de `00-core.sql` (FK a `depositos`). Comprobado por
-  prueba: UIF-T01 lee la fila de `alertas_uif` y UIF-T04 provoca una violación real de `CHAR(3)`.
-  `limpiar()` vacía `alertas_uif`. Sin parches.
-- Integración: `crearApp({ manifest })` por prueba con `registrar-deposito` y `consultar-deposito`
-  activos, `limites-por-canal` activa (VENTANILLA PEN 50000.00 no interfiere),
-  `conversion-moneda` **inactiva** y `alerta-uif` **activa** o **inactiva** según el caso;
-  `usr-cajero-1`, canal VENTANILLA, cuenta `0011-0123-456789` (PEN), umbrales de prueba de
-  `tests/setup/env.js` (`1000.00` PEN / `300.00` USD). Billetera con los helpers de nock.
-  `afterEach` espera a que se estabilice `auditoria_depositos` antes del `TRUNCATE`.
-  Líneas ≤ 100 caracteres.
+- **Tester** · 2026-11-03 · Feature 12 (`alerta-uif`) · **retrabajo** por SPEC-02 §4 v2.0 (spec 12
+  sin cambios; sin desarrollador).
+- **Ejecución:** `bash init.sh` completo, con PostgreSQL real (`deposito_test`) → exit 0,
+  `Test Suites: 23 passed, 23 total` · `Tests: 409 passed, 409 total` (0 todo) ·
+  `[OK] SPEC-12: todos sus casos tienen prueba` · `[OK] Todas las pruebas en verde` ·
+  `[OK] Entorno listo`.
+- **Cambios del retrabajo** (actualizado, no solo añadido):
+  - `tests/unit/alerta-uif/alerta.test.js`: la prueba UIF-R03 USD usaba `0011-0123-000002` como
+    cuenta USD (en v2.0 es PEN, de `usr-cliente-2`). Ahora todos los depósitos USD unitarios
+    (UIF-R02, UIF-R03 ×2, UIF-R05, UIF-R06) usan la billetera USD
+    `22222222-2222-4222-8222-222222222222` (`WALLET_USD`). Ya no queda ninguna referencia a
+    `0011-0123-000002` en las pruebas de SPEC-12.
+  - `tests/integration/alerta-uif/alerta.test.js`: `post()` acepta `body`; nuevo bloque
+    «umbral USD con Billetera USD» (VENTANILLA USD, límite 15000.00, `usr-cajero-1`) con los
+    helpers `billeteraUsdExiste`, `acreditaUsdOk` y `acreditaUsdFalla` de
+    `tests/helpers/billetera.js`. Antes el umbral USD solo se probaba en unitarias.
+- Integración: `crearApp({ manifest })` por prueba, `conversion-moneda` **inactiva**, `alerta-uif`
+  activa o inactiva según el caso; umbrales de prueba de `tests/setup/env.js` (`1000.00` PEN /
+  `300.00` USD). `afterEach` espera a que se estabilice `auditoria_depositos` antes de
+  `limpiar()`/`TRUNCATE`. Líneas ≤ 100 caracteres.
 - Unitarias: `jest.mock('src/config')` con `uif: { umbralPEN: null, umbralUSD: '300.00' }`
   (UIF-T07); `db` y `logger` falsos.
 
@@ -1061,8 +1064,8 @@ Umbral 80 % cumplido en `src/core/` y `src/modules/`.
 |---|---|---|
 | UIF-T01 | `tests/integration/alerta-uif/alerta.test.js` | `1000.00` PEN → 201 COMPLETADO; 1 fila en `alertas_uif`: `deposito_id` = id del depósito, `monto 1000.00`, `PEN`, `umbral 1000.00`, `PENDIENTE`, `id` UUID propio |
 | UIF-T02 | idem | `999.99` PEN → 201 COMPLETADO; 0 filas |
-| UIF-T03 | idem | Billetera 500, `5000.00` PEN → 502 `BILLETERA_NO_DISPONIBLE`; depósito `FALLIDO`; 0 filas |
-| UIF-T04 | idem | `repository.insertar` espiado reenvía al real con moneda `PENX` (error real de PostgreSQL) → 201 COMPLETADO normal, depósito COMPLETADO, 0 alertas; el logger del módulo (`logger.child({ modulo: 'alerta-uif' })`) recibe 1 `error` con `depositoId` |
+| UIF-T03 | idem | Billetera 500, `5000.00` PEN → 502 `BILLETERA_NO_DISPONIBLE`; depósito `FALLIDO`; 0 filas. Variante USD: Billetera USD 500 con `5000.00` USD a `22222222-…` → 502, `FALLIDO`, 0 filas |
+| UIF-T04 | idem | `repository.insertar` espiado reenvía al real con moneda `PENX` (error real de PostgreSQL) → 201 COMPLETADO, depósito COMPLETADO, 0 alertas; el logger del módulo recibe 1 `error` con `depositoId` |
 | UIF-T05 | idem | Depósito `5000.00` con alerta → `GET /depositos/{id}` 200 con exactamente las claves del depósito + `extensiones: {}`; ni el GET ni el 201 contienen `uif`/`umbral`/`PENDIENTE`/`estadoReporte` |
 | UIF-T06 | idem | Feature `inactivo`, `5000.00` PEN → 201 COMPLETADO; 0 filas |
 | UIF-T07 | `tests/unit/alerta-uif/alerta.test.js` | `config` simulado sin umbral PEN, `5000.00` PEN → sin INSERT (ni `db.query`); `logger.warn` con `depositoId` y `moneda: 'PEN'`; sin `error` |
@@ -1071,9 +1074,12 @@ Pruebas adicionales por regla (todas verdes):
 
 - **UIF-R01** (integración): FALLIDO con billetera 500 y reintento exitoso con la misma clave → 1
   alerta PENDIENTE.
-- **UIF-R02** (unit): `100.00` USD convertido a `375.00` PEN → sin alerta (usa el monto depositado).
-- **UIF-R03** (unit): `300.00` USD (igual al umbral) → INSERT con `'PENDIENTE'` y parámetros
+- **UIF-R02** (unit): `100.00` USD a la billetera USD convertido a `375.00` PEN → sin alerta.
+- **UIF-R03 umbral USD** (unit): `300.00` USD a `22222222-…` → INSERT `'PENDIENTE'` con
   `[uuid v4, depositoId, '300.00', 'USD', '300.00']`; `299.99` USD → sin INSERT.
+- **UIF-R03 umbral USD** (integración, Billetera USD con nock): `300.00` USD VENTANILLA a
+  `22222222-…` → 201 COMPLETADO, 1 GET y 1 POST a Billetera USD, 0 llamadas a la billetera PEN,
+  1 fila `{ monto 300.00, USD, umbral 300.00, PENDIENTE }`; `299.99` USD → 201 COMPLETADO, 0 filas.
 - **UIF-R05** (unit): contrato SPEC-06 (`id`, `tipo: 'post-proceso'`, sin `leerExtension`); el
   depósito no se modifica.
 - **UIF-R06** (unit): `db.query` rechaza → `logger.error` con `depositoId`, `ejecutar` resuelve.
@@ -1081,11 +1087,11 @@ Pruebas adicionales por regla (todas verdes):
 
 ### Casos en `test.todo`
 
-Ninguno. No había `test.todo` de otras specs esperando SPEC-12.
+Ninguno.
 
 ### Pruebas fallidas
 
-Ninguna.
+Ninguna. No hizo falta cambiar `src/`.
 
 ### Cobertura (`src/core/` y `src/modules/`)
 
@@ -1093,22 +1099,19 @@ Ninguna.
 -----------------------------|---------|----------|---------|---------|
 File                         | % Stmts | % Branch | % Funcs | % Lines |
 -----------------------------|---------|----------|---------|---------|
-All files                    |    99.7 |    95.01 |   99.19 |   99.83 |
+All files                    |   99.72 |     95.1 |   99.23 |   99.84 |
  core                        |   99.46 |    94.73 |   97.14 |   99.42 |
- core/clients                |     100 |    92.85 |     100 |     100 |
+ core/clients                |     100 |    95.12 |     100 |     100 |
  core/middlewares            |     100 |    94.87 |     100 |     100 |
  core/repositories           |     100 |     87.5 |     100 |     100 |
  core/tareas                 |     100 |      100 |     100 |     100 |
  modules/alerta-uif          |     100 |       80 |     100 |     100 |
-  index.js                   |     100 |       80 |     100 |     100 |
-  repository.js              |     100 |      100 |     100 |     100 |
  modules/consultar-deposito  |     100 |      100 |     100 |     100 |
  modules/conversion-moneda   |     100 |      100 |     100 |     100 |
- modules/historial-depositos |   98.68 |     91.3 |     100 |     100 |
+ modules/historial-depositos |    98.7 |     91.3 |     100 |     100 |
  modules/limites-por-canal   |     100 |      100 |     100 |     100 |
  modules/registrar-deposito  |     100 |      100 |     100 |     100 |
 -----------------------------|---------|----------|---------|---------|
 ```
 
-Umbral 80 % cumplido. Ramas no cubiertas en `alerta-uif/index.js:41` (los `?.`/`??` defensivos
-para un error sin `message`/`code` y `config.uif` ausente): no son casos de la spec.
+Todo por encima del 80 %.

@@ -255,7 +255,7 @@
         "La alerta nunca afecta al depósito ni la ve el cliente",
         "UIF-T01 a UIF-T07 pasan"
       ],
-      "status": "reabierta",
+      "status": "done",
       "retrabajo": true
     }
   ]

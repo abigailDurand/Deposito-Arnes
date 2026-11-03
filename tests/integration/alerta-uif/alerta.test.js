@@ -15,6 +15,9 @@ const RUTA = '/api/v1/depositos';
 const CUENTA = '0011-0123-456789';
 const USUARIO = 'usr-cajero-1';
 const BODY = { cuentaDestino: CUENTA, monto: '1000.00', moneda: 'PEN', canal: 'VENTANILLA' };
+// SPEC-02 §4 v2.0: billetera USD de usr-cliente-2 (Billetera USD); límite VENTANILLA USD 15000.00.
+const WALLET_USD = '22222222-2222-4222-8222-222222222222';
+const BODY_USD = { cuentaDestino: WALLET_USD, monto: '300.00', moneda: 'USD', canal: 'VENTANILLA' };
 
 // SPEC-12 §6: VENTANILLA (límite alto), conversion-moneda inactiva; alerta-uif según el caso.
 function manifest({ uif = 'activo' } = {}) {
@@ -31,13 +34,15 @@ function manifest({ uif = 'activo' } = {}) {
   };
 }
 
-function post(app, { monto = '1000.00', clave = 'uif-clave-0001', correlation } = {}) {
+function post(app, {
+  monto = '1000.00', clave = 'uif-clave-0001', correlation, body = BODY,
+} = {}) {
   let r = request(app)
     .post(RUTA)
     .set('Authorization', `Bearer ${token(USUARIO)}`)
     .set('Idempotency-Key', clave);
   if (correlation) r = r.set('X-Correlation-Id', correlation);
-  return r.send({ ...BODY, monto });
+  return r.send({ ...body, monto });
 }
 
 function get(app, id) {
@@ -249,5 +254,60 @@ describe('SPEC-12 alerta-uif: reglas con la BD real', () => {
     );
     expect(rows.length).toBeGreaterThan(0);
     rows.forEach(({ t }) => expect(t).not.toMatch(/uif|umbral|estado_reporte/i));
+  });
+});
+
+describe('SPEC-12 alerta-uif: umbral USD con Billetera USD', () => {
+  test('UIF-R03 300.00 USD (igual al umbral) a la billetera USD → 1 alerta umbral 300.00',
+    async () => {
+      const app = crearApp({ manifest: manifest() });
+      const consulta = billetera.billeteraUsdExiste(WALLET_USD);
+      const credito = billetera.acreditaUsdOk();
+      const creditoPen = billetera.acreditaOk(CUENTA);
+
+      const res = await post(app, { monto: '300.00', body: BODY_USD });
+
+      expect(res.status).toBe(201);
+      expect(res.body).toMatchObject({
+        cuentaDestino: WALLET_USD, monto: '300.00', moneda: 'USD', estado: 'COMPLETADO',
+      });
+      expect(consulta.peticiones).toHaveLength(1);
+      expect(credito.peticiones).toHaveLength(1);
+      expect(creditoPen.peticiones).toHaveLength(0);
+      expect(await alertas()).toEqual([{
+        id: expect.stringMatching(/^[0-9a-f-]{36}$/),
+        deposito_id: res.body.id,
+        monto: '300.00',
+        moneda: 'USD',
+        umbral: '300.00',
+        estado_reporte: 'PENDIENTE',
+      }]);
+    });
+
+  test('UIF-R03 299.99 USD a la billetera USD → COMPLETADO; 0 alertas', async () => {
+    const app = crearApp({ manifest: manifest() });
+    billetera.billeteraUsdExiste(WALLET_USD);
+    const credito = billetera.acreditaUsdOk();
+
+    const res = await post(app, { monto: '299.99', body: BODY_USD });
+
+    expect(res.status).toBe(201);
+    expect(res.body).toMatchObject({ moneda: 'USD', estado: 'COMPLETADO' });
+    expect(credito.peticiones).toHaveLength(1);
+    expect(await alertas()).toHaveLength(0);
+  });
+
+  test('UIF-T03 (USD) Billetera USD 500, 5000.00 USD (FALLIDO) → 0 alertas', async () => {
+    const app = crearApp({ manifest: manifest() });
+    billetera.billeteraUsdExiste(WALLET_USD);
+    const credito = billetera.acreditaUsdFalla({ status: 500 });
+
+    const res = await post(app, { monto: '5000.00', body: BODY_USD });
+
+    expect(res.status).toBe(502);
+    expect(res.body.codigo).toBe('BILLETERA_NO_DISPONIBLE');
+    expect(credito.peticiones).toHaveLength(1);
+    expect(await depositos()).toEqual([expect.objectContaining({ estado: 'FALLIDO' })]);
+    expect(await alertas()).toHaveLength(0);
   });
 });
