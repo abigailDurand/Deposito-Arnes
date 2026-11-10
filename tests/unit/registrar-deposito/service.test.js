@@ -2,11 +2,14 @@
 
 const Decimal = require('decimal.js');
 
+const config = require('../../../src/config');
 const billeteraClient = require('../../../src/core/clients/billeteraClient');
 const db = require('../../../src/core/db');
 const { ErrorApp } = require('../../../src/core/errores');
+const { logger } = require('../../../src/core/logger');
 const permisos = require('../../../src/core/permisos');
 const pipeline = require('../../../src/core/pipeline');
+const reconciliacion = require('../../../src/modules/registrar-deposito/reconciliacion');
 const repository = require('../../../src/modules/registrar-deposito/repository');
 const service = require('../../../src/modules/registrar-deposito/service');
 const { esquemaDeposito } = require('../../../src/modules/registrar-deposito/schema');
@@ -52,7 +55,7 @@ function prepararDependencias() {
     consultarCuenta: jest.spyOn(billeteraClient, 'consultarCuenta')
       .mockImplementation(paso('consultarCuenta', async () => ({ ...CUENTA_PEN }))),
     acreditar: jest.spyOn(billeteraClient, 'acreditar')
-      .mockImplementation(paso('acreditar', async () => undefined)),
+      .mockImplementation(paso('acreditar', async () => ({ estado: 'ACREDITADO' }))),
     verificarCanal: jest.spyOn(permisos, 'verificarCanal')
       .mockImplementation(paso('verificarCanal', () => undefined)),
     verificarTitular: jest.spyOn(permisos, 'verificarTitular')
@@ -179,9 +182,9 @@ describe('SPEC-07 service: casos', () => {
       [db.pool, id, 'PROCESANDO', 'COMPLETADO'],
     ]);
     expect(res).toMatchObject({ id, estado: 'COMPLETADO' });
-    // SPEC-02 INT-R05: acreditar recibe además usuarioId y canal.
+    // SPEC-02 v2.1 INT-R05: acreditar recibe además titularId (titular de la cuenta) y canal.
     expect(deps.acreditar.mock.calls[0][0]).toMatchObject({
-      depositoId: id, cuenta: CUENTA, moneda: 'PEN', usuarioId: 'usr-agente-1', canal: 'AGENTE',
+      depositoId: id, cuenta: CUENTA, moneda: 'PEN', titularId: 'usr-cliente-1', canal: 'AGENTE',
     });
   });
 
@@ -203,8 +206,10 @@ describe('SPEC-07 service: casos', () => {
       'PROCESANDO→COMPLETADO', 'ejecutarPostProcesos',
     ]);
     expect(deps.acreditar.mock.calls[0][0]).toMatchObject({
-      depositoId: ID, cuenta: CUENTA, moneda: 'PEN', usuarioId: 'usr-agente-1', canal: 'AGENTE',
+      depositoId: ID, cuenta: CUENTA, moneda: 'PEN', canal: 'AGENTE',
     });
+    // SPEC-02 v2.1 INT-R05: acreditar ya no recibe usuarioId.
+    expect(deps.acreditar.mock.calls[0][0]).not.toHaveProperty('usuarioId');
   });
 });
 
@@ -227,7 +232,7 @@ describe('SPEC-07 service: reglas', () => {
     const [deposito, contexto] = deps.validadores.mock.calls[0];
     expect(Object.keys(deposito).sort()).toEqual([
       'canal', 'cuentaDestino', 'extensiones', 'id', 'moneda', 'monedaAcreditar', 'monto',
-      'montoAcreditar', 'referencia', 'usuarioId',
+      'montoAcreditar', 'referencia', 'titularId', 'usuarioId',
     ].concat(deposito.estado ? ['estado'] : []).sort());
     expect(deposito.id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
     expect(deposito.monto).toBeInstanceOf(Decimal);
@@ -235,7 +240,7 @@ describe('SPEC-07 service: reglas', () => {
     expect(deposito.monto.toFixed(2)).toBe('150.00');
     expect(deposito).toMatchObject({
       cuentaDestino: CUENTA, moneda: 'PEN', canal: 'AGENTE', referencia: 'Pago alquiler',
-      usuarioId: 'usr-agente-1', monedaAcreditar: 'PEN',
+      usuarioId: 'usr-agente-1', titularId: 'usr-cliente-1', monedaAcreditar: 'PEN',
     });
     expect(contexto).toMatchObject({ usuario: AGENTE_1, cuenta: CUENTA_PEN, correlationId: 'corr-1', db: db.pool });
     expect(typeof contexto.logger.info).toBe('function');
@@ -308,10 +313,10 @@ describe('SPEC-07 service: reglas', () => {
     expect(deps.leerExtensiones.mock.calls[0][1]).toMatchObject({ cuenta: null, usuario: AGENTE_1 });
   });
 
-  test('RD-R08 reintentar FALLIDO acredita monto_acreditar/moneda_acreditar/usuario_id/canal guardados; post-procesos con contexto.cuenta = null', async () => {
+  test('RD-R08 reintentar FALLIDO acredita monto_acreditar/moneda_acreditar/titular_id/canal guardados; post-procesos con contexto.cuenta = null', async () => {
     deps.buscarPorId.mockResolvedValueOnce(fila('FALLIDO', {
       monto: '100.00', moneda: 'USD', monto_acreditar: '370.00', moneda_acreditar: 'PEN',
-      usuario_id: 'usr-cajero-1', canal: 'VENTANILLA',
+      usuario_id: 'usr-cajero-1', titular_id: 'usr-cliente-1', canal: 'VENTANILLA',
     }));
     deps.leerExtensiones.mockResolvedValueOnce({ conversion: { tasa: '3.70' } });
 
@@ -322,7 +327,9 @@ describe('SPEC-07 service: reglas', () => {
     expect(credito.monto.toFixed(2)).toBe('370.00');
     expect(credito.moneda).toBe('PEN');
     expect(credito.cuenta).toBe(CUENTA);
-    expect(credito.usuarioId).toBe('usr-cajero-1');
+    // SPEC-02 v2.1 INT-R05: el crédito lleva el titular guardado (titular_id), no usuarioId.
+    expect(credito.titularId).toBe('usr-cliente-1');
+    expect(credito).not.toHaveProperty('usuarioId');
     expect(credito.canal).toBe('VENTANILLA');
     const [deposito, contexto] = deps.postProcesos.mock.calls[0];
     expect(contexto.cuenta).toBeNull();
@@ -382,11 +389,11 @@ describe('SPEC-07 repository (db simulada)', () => {
     await repository.insertar(tx, {
       id: ID, cuentaDestino: CUENTA, monto: new Decimal('150'), moneda: 'USD',
       montoAcreditar: new Decimal('555.5'), monedaAcreditar: 'PEN', canal: 'AGENTE',
-      referencia: null, usuarioId: 'usr-agente-1',
+      referencia: null, usuarioId: 'usr-agente-1', titularId: 'usr-cliente-1',
     });
     expect(query.mock.calls[0][0]).toMatch(/'PENDIENTE'/);
     expect(query.mock.calls[0][1]).toEqual([
-      ID, CUENTA, '150.00', 'USD', '555.50', 'PEN', 'AGENTE', null, 'usr-agente-1',
+      ID, CUENTA, '150.00', 'USD', '555.50', 'PEN', 'AGENTE', null, 'usr-agente-1', 'usr-cliente-1',
     ]);
     expect(await repository.buscarPorId(tx, ID)).toBeNull();
   });
@@ -405,18 +412,20 @@ describe('SPEC-07 repository (db simulada)', () => {
 describe('SPEC-07 service: Billetera USD (RD-T13..RD-T18)', () => {
   // SPEC-02 §4: billetera USD 11111111-… de usr-cliente-1; consultarCuenta USD devuelve ACTIVA (INT-R04).
   const WALLET = '11111111-1111-4111-8111-111111111111';
-  const WALLET_FALLA = '99999999-9999-4999-8999-999999999999';
+  // SPEC-02 §4: cccccccc-… / usr-falla-una-vez (503 la primera vez y luego OK).
+  const WALLET_FALLA = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+  const TITULARES = { [WALLET]: 'usr-cliente-1', [WALLET_FALLA]: 'usr-falla-una-vez' };
   const CUENTA_USD = { numero: WALLET, estado: 'ACTIVA', moneda: 'USD', titularId: 'usr-cliente-1' };
   const DATOS_USD = { cuentaDestino: WALLET, monto: '150.00', moneda: 'USD', canal: 'AGENTE' };
 
   beforeEach(() => {
     deps.consultarCuenta.mockImplementation(async (numero) => {
       orden.push('consultarCuenta');
-      return { ...CUENTA_USD, numero, titularId: numero === WALLET ? 'usr-cliente-1' : null };
+      return { ...CUENTA_USD, numero, titularId: TITULARES[numero] ?? null };
     });
   });
 
-  test('RD-T13 usr-agente-1 "150.00" USD AGENTE a 11111111-… → COMPLETADO; acreditar recibe depositoId = id, usuarioId y canal', async () => {
+  test('RD-T13 usr-agente-1 "150.00" USD AGENTE a 11111111-… → COMPLETADO; acreditar recibe depositoId = id, titularId y canal', async () => {
     const res = await service.registrar(DATOS_USD, AGENTE_1, 'c');
 
     const id = deps.insertar.mock.calls[0][1].id;
@@ -425,9 +434,9 @@ describe('SPEC-07 service: Billetera USD (RD-T13..RD-T18)', () => {
     expect(deps.acreditar).toHaveBeenCalledTimes(1);
     const [credito, correlationId] = deps.acreditar.mock.calls[0];
     expect(correlationId).toBe('c');
-    expect(Object.keys(credito).sort()).toEqual(['canal', 'cuenta', 'depositoId', 'moneda', 'monto', 'usuarioId']);
+    expect(Object.keys(credito).sort()).toEqual(['canal', 'cuenta', 'depositoId', 'moneda', 'monto', 'titularId']);
     expect(credito).toMatchObject({
-      depositoId: id, cuenta: WALLET, moneda: 'USD', usuarioId: 'usr-agente-1', canal: 'AGENTE',
+      depositoId: id, cuenta: WALLET, moneda: 'USD', titularId: 'usr-cliente-1', canal: 'AGENTE',
     });
     expect(credito.monto).toBeInstanceOf(Decimal);
     expect(credito.monto.toFixed(2)).toBe('150.00');
@@ -479,7 +488,7 @@ describe('SPEC-07 service: Billetera USD (RD-T13..RD-T18)', () => {
     expect(deps.postProcesos).not.toHaveBeenCalled();
   });
 
-  test('RD-T18 Billetera USD 500 al acreditar → FALLIDO; reintentar → mismo id, COMPLETADO y acreditar recibe exactamente los mismos datos', async () => {
+  test('RD-T18 Billetera USD 503 al acreditar (cccccccc-…) → FALLIDO; reintentar → mismo id, COMPLETADO y acreditar recibe exactamente los mismos datos (titular_id guardado)', async () => {
     deps.acreditar.mockRejectedValueOnce(new ErrorApp('BILLETERA_NO_DISPONIBLE'));
     const datos = { ...DATOS_USD, cuentaDestino: WALLET_FALLA };
 
@@ -496,7 +505,9 @@ describe('SPEC-07 service: Billetera USD (RD-T13..RD-T18)', () => {
       moneda_acreditar: 'USD',
       canal: 'AGENTE',
       usuario_id: 'usr-agente-1',
+      titular_id: guardado.titularId,
     }));
+    expect(guardado.titularId).toBe('usr-falla-una-vez');
     // Otro usuario del mismo rol reintenta: el body debe salir de la fila, no del JWT actual (RD-R08).
     const res = await service.reintentar(guardado.id, { id: 'usr-agente-2', roles: ['AGENTE'] }, 'c2');
 
@@ -510,6 +521,330 @@ describe('SPEC-07 service: Billetera USD (RD-T13..RD-T18)', () => {
     expect(reintento.monto.toFixed(2)).toBe(original.monto.toFixed(2));
     expect({ ...reintento, monto: reintento.monto.toFixed(2) })
       .toEqual({ ...original, monto: original.monto.toFixed(2) });
-    expect(reintento).toMatchObject({ usuarioId: 'usr-agente-1', canal: 'AGENTE', moneda: 'USD' });
+    expect(reintento).toMatchObject({ canal: 'AGENTE', moneda: 'USD', titularId: 'usr-falla-una-vez' });
+    expect(reintento).not.toHaveProperty('usuarioId');
+  });
+});
+
+describe('SPEC-07 v2.2 service: Billetera USD (RD-T19..RD-T21, RD-R08, RD-R11, RD-R12)', () => {
+  // SPEC-02 §4: billeteras USD; INT-R04 traduce BLOCKED → BLOQUEADA y CLOSED → CERRADA.
+  const WALLET = '11111111-1111-4111-8111-111111111111';
+  const DATOS_USD = { cuentaDestino: WALLET, monto: '150.00', moneda: 'USD', canal: 'AGENTE' };
+  const CUENTA_USD = { numero: WALLET, estado: 'ACTIVA', moneda: 'USD', titularId: 'usr-cliente-1' };
+  const FILA_USD = {
+    cuenta_destino: WALLET, moneda: 'USD', moneda_acreditar: 'USD', titular_id: 'usr-cliente-1',
+  };
+
+  beforeEach(() => {
+    deps.consultarCuenta.mockImplementation(async (numero) => {
+      orden.push('consultarCuenta');
+      return { ...CUENTA_USD, numero };
+    });
+  });
+
+  test('RD-T13 el deposito lleva titularId = cuenta.titularId (RD-R05) e insertar lo recibe junto a usuarioId', async () => {
+    await service.registrar(DATOS_USD, AGENTE_1, 'c');
+    expect(deps.insertar.mock.calls[0][1]).toMatchObject({
+      usuarioId: 'usr-agente-1', titularId: 'usr-cliente-1', cuentaDestino: WALLET,
+    });
+  });
+
+  test('RD-T19 billetera USD BLOQUEADA (33333333-…) o CERRADA (44444444-…) → 422 CUENTA_INACTIVA; nada guardado ni acreditado', async () => {
+    for (const [numero, estado, titularId] of [
+      ['33333333-3333-4333-8333-333333333333', 'BLOQUEADA', 'usr-bloqueada'],
+      ['44444444-4444-4444-8444-444444444444', 'CERRADA', 'usr-cerrada'],
+    ]) {
+      deps.consultarCuenta.mockResolvedValueOnce({ numero, estado, moneda: 'USD', titularId });
+      await expect(service.registrar({ ...DATOS_USD, cuentaDestino: numero }, AGENTE_1, 'c'))
+        .rejects.toMatchObject({ codigo: 'CUENTA_INACTIVA', status: 422 });
+    }
+    expect(deps.verificarCanal).not.toHaveBeenCalled();
+    expect(deps.validadores).not.toHaveBeenCalled();
+    expect(deps.enTransaccion).not.toHaveBeenCalled();
+    expect(deps.acreditar).not.toHaveBeenCalled();
+  });
+
+  test('RD-T20 acreditar lanza CUENTA_INACTIVA → PROCESANDO→FALLIDO y ErrorApp CUENTA_INACTIVA 422 { depositoId }; sin post-procesos', async () => {
+    deps.acreditar.mockRejectedValueOnce(new ErrorApp('CUENTA_INACTIVA'));
+
+    const error = await service.registrar(DATOS_USD, AGENTE_1, 'c').catch((e) => e);
+
+    const id = deps.insertar.mock.calls[0][1].id;
+    expect(error).toBeInstanceOf(ErrorApp);
+    expect(error).toMatchObject({ codigo: 'CUENTA_INACTIVA', status: 422, depositoId: id });
+    expect(deps.cambiarEstado.mock.calls.map((c) => `${c[2]}→${c[3]}`))
+      .toEqual(['PENDIENTE→PROCESANDO', 'PROCESANDO→FALLIDO']);
+    expect(deps.postProcesos).not.toHaveBeenCalled();
+  });
+
+  test('RD-T21 acreditar resuelve PENDIENTE → devuelve el depósito en PROCESANDO (fila de PENDIENTE→PROCESANDO); sin COMPLETADO ni post-procesos', async () => {
+    deps.acreditar.mockImplementationOnce(async () => {
+      orden.push('acreditar');
+      return { estado: 'PENDIENTE' };
+    });
+
+    const res = await service.registrar(DATOS_USD, AGENTE_1, 'c');
+
+    const id = deps.insertar.mock.calls[0][1].id;
+    expect(res).toMatchObject({ id, estado: 'PROCESANDO', extensiones: {} });
+    expect(deps.cambiarEstado.mock.calls.map((c) => `${c[2]}→${c[3]}`))
+      .toEqual(['PENDIENTE→PROCESANDO']);
+    expect(deps.postProcesos).not.toHaveBeenCalled();
+    expect(orden.slice(-2)).toEqual(['PENDIENTE→PROCESANDO', 'acreditar']);
+  });
+
+  test('RD-R08 acreditar resuelve RECHAZADO (registrar) → PROCESANDO→FALLIDO y 502 BILLETERA_NO_DISPONIBLE con depositoId', async () => {
+    deps.acreditar.mockResolvedValueOnce({ estado: 'RECHAZADO' });
+
+    const error = await service.registrar(DATOS_USD, AGENTE_1, 'c').catch((e) => e);
+
+    const id = deps.insertar.mock.calls[0][1].id;
+    expect(error).toMatchObject({ codigo: 'BILLETERA_NO_DISPONIBLE', status: 502, depositoId: id });
+    expect(deps.cambiarEstado.mock.calls.map((c) => `${c[2]}→${c[3]}`))
+      .toEqual(['PENDIENTE→PROCESANDO', 'PROCESANDO→FALLIDO']);
+    expect(deps.postProcesos).not.toHaveBeenCalled();
+  });
+
+  test('RD-R08 reintentar FALLIDO y acreditar resuelve RECHAZADO → FALLIDO→PROCESANDO→FALLIDO y 502 con depositoId', async () => {
+    deps.buscarPorId.mockResolvedValueOnce(fila('FALLIDO', FILA_USD));
+    deps.acreditar.mockResolvedValueOnce({ estado: 'RECHAZADO' });
+
+    await expect(service.reintentar(ID, AGENTE_1, 'c'))
+      .rejects.toMatchObject({ codigo: 'BILLETERA_NO_DISPONIBLE', status: 502, depositoId: ID });
+    expect(deps.cambiarEstado.mock.calls.map((c) => `${c[2]}→${c[3]}`))
+      .toEqual(['FALLIDO→PROCESANDO', 'PROCESANDO→FALLIDO']);
+    expect(deps.postProcesos).not.toHaveBeenCalled();
+  });
+
+  test('RD-R11 reintentar FALLIDO y acreditar lanza CUENTA_INACTIVA → FALLIDO y 422 CUENTA_INACTIVA con depositoId', async () => {
+    deps.buscarPorId.mockResolvedValueOnce(fila('FALLIDO', FILA_USD));
+    deps.acreditar.mockRejectedValueOnce(new ErrorApp('CUENTA_INACTIVA'));
+
+    await expect(service.reintentar(ID, AGENTE_1, 'c'))
+      .rejects.toMatchObject({ codigo: 'CUENTA_INACTIVA', status: 422, depositoId: ID });
+    expect(deps.cambiarEstado.mock.calls.map((c) => `${c[2]}→${c[3]}`))
+      .toEqual(['FALLIDO→PROCESANDO', 'PROCESANDO→FALLIDO']);
+  });
+
+  test('RD-R12 reintentar FALLIDO y acreditar resuelve PENDIENTE → PROCESANDO con las extensiones leídas; sin post-procesos', async () => {
+    deps.buscarPorId.mockResolvedValueOnce(fila('FALLIDO', FILA_USD));
+    deps.leerExtensiones.mockResolvedValueOnce({ uif: { alerta: false } });
+    deps.acreditar.mockResolvedValueOnce({ estado: 'PENDIENTE' });
+
+    const res = await service.reintentar(ID, AGENTE_1, 'c');
+
+    expect(res).toMatchObject({ id: ID, estado: 'PROCESANDO', extensiones: { uif: { alerta: false } } });
+    expect(deps.cambiarEstado.mock.calls.map((c) => `${c[2]}→${c[3]}`)).toEqual(['FALLIDO→PROCESANDO']);
+    expect(deps.postProcesos).not.toHaveBeenCalled();
+  });
+});
+
+describe('SPEC-07 v2.2 reconciliar (RD-R13, dependencias simuladas)', () => {
+  const WALLET = '11111111-1111-4111-8111-111111111111';
+  const OTRO = '3f1b2c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d';
+
+  // Fila USD en PROCESANDO; `haceMs` = cuánto lleva en PROCESANDO (actualizado_en).
+  function filaUsd(id, haceMs) {
+    return fila('PROCESANDO', {
+      id,
+      cuenta_destino: WALLET,
+      moneda: 'USD',
+      moneda_acreditar: 'USD',
+      titular_id: 'usr-cliente-1',
+      actualizado_en: new Date(Date.now() - haceMs),
+    });
+  }
+
+  let tomar;
+  let log;
+
+  beforeEach(() => {
+    tomar = jest.spyOn(repository, 'tomarParaReconciliar').mockResolvedValue([]);
+    log = { error: jest.fn(), warn: jest.fn(), info: jest.fn(), debug: jest.fn() };
+    log.child = () => log;
+    jest.spyOn(logger, 'child').mockImplementation(() => log);
+  });
+
+  test('RD-T22 ACREDITADO → PROCESANDO→COMPLETADO en la tx; post-procesos una vez tras el COMMIT con cuenta = null y usuario { id, roles: [] }; datos guardados', async () => {
+    tomar.mockResolvedValueOnce([filaUsd(ID, 60000)]);
+    deps.leerExtensiones.mockResolvedValueOnce({ uif: { alerta: false } });
+
+    const resumen = await service.reconciliar();
+
+    expect(resumen).toEqual({ completados: 1, fallidos: 0, pendientes: 0 });
+    expect(tomar).toHaveBeenCalledWith(TX, config.reconciliacion.antiguedadMs, expect.any(Number));
+    expect(tomar.mock.calls[0][2]).toBeGreaterThan(0);
+    expect(deps.cambiarEstado.mock.calls).toEqual([[TX, ID, 'PROCESANDO', 'COMPLETADO']]);
+    const [credito, correlationId] = deps.acreditar.mock.calls[0];
+    expect(Object.keys(credito).sort()).toEqual(['canal', 'cuenta', 'depositoId', 'moneda', 'monto', 'titularId']);
+    expect(credito).toMatchObject({
+      depositoId: ID, cuenta: WALLET, moneda: 'USD', titularId: 'usr-cliente-1', canal: 'AGENTE',
+    });
+    expect(credito.monto).toBeInstanceOf(Decimal);
+    expect(credito.monto.toFixed(2)).toBe('150.00');
+    expect(correlationId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+    expect(orden.indexOf('COMMIT')).toBeLessThan(orden.indexOf('ejecutarPostProcesos'));
+    expect(deps.postProcesos).toHaveBeenCalledTimes(1);
+    const [deposito, contexto] = deps.postProcesos.mock.calls[0];
+    expect(deposito).toMatchObject({ id: ID, estado: 'COMPLETADO', extensiones: { uif: { alerta: false } } });
+    expect(contexto).toMatchObject({
+      cuenta: null, usuario: { id: 'usr-agente-1', roles: [] }, correlationId,
+    });
+    expect(log.error).not.toHaveBeenCalled();
+  });
+
+  test('RD-T22 RECHAZADO (replay FALLIDO) o CUENTA_INACTIVA → PROCESANDO→FALLIDO; sin post-procesos', async () => {
+    tomar.mockResolvedValueOnce([filaUsd(ID, 60000), filaUsd(OTRO, 60000)]);
+    deps.acreditar
+      .mockResolvedValueOnce({ estado: 'RECHAZADO' })
+      .mockRejectedValueOnce(new ErrorApp('CUENTA_INACTIVA'));
+
+    const resumen = await service.reconciliar();
+
+    expect(resumen).toEqual({ completados: 0, fallidos: 2, pendientes: 0 });
+    expect(deps.cambiarEstado.mock.calls).toEqual([
+      [TX, ID, 'PROCESANDO', 'FALLIDO'],
+      [TX, OTRO, 'PROCESANDO', 'FALLIDO'],
+    ]);
+    expect(deps.postProcesos).not.toHaveBeenCalled();
+    expect(deps.leerExtensiones).not.toHaveBeenCalled();
+  });
+
+  test('RD-T22 PENDIENTE (replay VALIDADO) o BILLETERA_NO_DISPONIBLE → sigue en PROCESANDO; sin cambiarEstado ni alerta si es reciente', async () => {
+    tomar.mockResolvedValueOnce([filaUsd(ID, 60000), filaUsd(OTRO, 60000)]);
+    deps.acreditar
+      .mockResolvedValueOnce({ estado: 'PENDIENTE' })
+      .mockRejectedValueOnce(new ErrorApp('BILLETERA_NO_DISPONIBLE'));
+
+    const resumen = await service.reconciliar();
+
+    expect(resumen).toEqual({ completados: 0, fallidos: 0, pendientes: 2 });
+    expect(deps.cambiarEstado).not.toHaveBeenCalled();
+    expect(deps.postProcesos).not.toHaveBeenCalled();
+    expect(log.error).not.toHaveBeenCalled();
+  });
+
+  test('RD-R13 sigue en PROCESANDO con más de RECONCILIACION_ALERTA_MS → logger.error con depositoId', async () => {
+    tomar.mockResolvedValueOnce([filaUsd(ID, config.reconciliacion.alertaMs + 60000)]);
+    deps.acreditar.mockRejectedValueOnce(new ErrorApp('BILLETERA_NO_DISPONIBLE'));
+
+    await service.reconciliar();
+
+    expect(log.error).toHaveBeenCalledTimes(1);
+    expect(log.error.mock.calls[0][0]).toMatchObject({ depositoId: ID });
+    expect(log.error.mock.calls[0][0].enProcesandoMs).toBeGreaterThan(config.reconciliacion.alertaMs);
+  });
+
+  test('RD-R13 acreditar lanza un error que no es ErrorApp → se registra, sigue en PROCESANDO y el lote continúa', async () => {
+    tomar.mockResolvedValueOnce([filaUsd(ID, 60000), filaUsd(OTRO, 60000)]);
+    deps.acreditar.mockRejectedValueOnce(new TypeError('inesperado'));
+
+    const resumen = await service.reconciliar();
+
+    expect(resumen).toEqual({ completados: 1, fallidos: 0, pendientes: 1 });
+    expect(deps.cambiarEstado.mock.calls).toEqual([[TX, OTRO, 'PROCESANDO', 'COMPLETADO']]);
+    expect(log.error).toHaveBeenCalledWith(
+      expect.objectContaining({ depositoId: ID, error: 'inesperado' }), expect.any(String),
+    );
+  });
+
+  test('RD-R13 un post-proceso falla tras COMPLETADO → se registra; no deshace el estado ni lanza', async () => {
+    tomar.mockResolvedValueOnce([filaUsd(ID, 60000)]);
+    deps.postProcesos.mockRejectedValueOnce(new Error('falla post-proceso'));
+
+    await expect(service.reconciliar()).resolves.toEqual({ completados: 1, fallidos: 0, pendientes: 0 });
+    expect(deps.cambiarEstado.mock.calls).toEqual([[TX, ID, 'PROCESANDO', 'COMPLETADO']]);
+    expect(log.error).toHaveBeenCalledWith(
+      expect.objectContaining({ depositoId: ID, error: 'falla post-proceso' }), expect.any(String),
+    );
+  });
+
+  test('RD-R13 sin depósitos para reconciliar → resumen en cero; billetera no llamada', async () => {
+    await expect(service.reconciliar()).resolves.toEqual({ completados: 0, fallidos: 0, pendientes: 0 });
+    expect(deps.acreditar).not.toHaveBeenCalled();
+    expect(deps.enTransaccion).toHaveBeenCalledTimes(1);
+  });
+
+  test('RD-R13 tomarParaReconciliar: PROCESANDO, solo UUID, por antigüedad, LIMIT y FOR UPDATE SKIP LOCKED', async () => {
+    jest.restoreAllMocks();
+    const query = jest.fn().mockResolvedValueOnce({ rows: [fila('PROCESANDO')] });
+
+    const filas = await repository.tomarParaReconciliar({ query }, 10000, 50);
+
+    expect(filas).toEqual([fila('PROCESANDO')]);
+    const [sql, params] = query.mock.calls[0];
+    expect(sql).toMatch(/estado = 'PROCESANDO'/);
+    expect(sql).toMatch(/cuenta_destino ~ '\^\[0-9a-f\]\{8\}/);
+    expect(sql).toMatch(/actualizado_en < now\(\)/);
+    expect(sql).toMatch(/LIMIT \$2\s+FOR UPDATE SKIP LOCKED/);
+    expect(params).toEqual([10000, 50]);
+  });
+});
+
+describe('SPEC-07 v2.2 reconciliacion.iniciar (RD-R13, temporizador)', () => {
+  const RESUMEN = { completados: 0, fallidos: 0, pendientes: 0 };
+
+  beforeEach(() => {
+    jest.useFakeTimers();
+  });
+
+  afterEach(() => {
+    reconciliacion.detener();
+    jest.useRealTimers();
+  });
+
+  test('RD-R13 iniciar programa un ciclo cada RECONCILIACION_INTERVALO_MS, con unref y una sola vez; detener lo limpia', async () => {
+    const ciclo = jest.spyOn(service, 'reconciliar').mockResolvedValue(RESUMEN);
+
+    const temporizador = reconciliacion.iniciar();
+    expect(reconciliacion.iniciar()).toBe(temporizador);
+    expect(temporizador.hasRef()).toBe(false);
+    expect(ciclo).not.toHaveBeenCalled();
+
+    await jest.advanceTimersByTimeAsync(config.reconciliacion.intervaloMs);
+    expect(ciclo).toHaveBeenCalledTimes(1);
+    await jest.advanceTimersByTimeAsync(config.reconciliacion.intervaloMs);
+    expect(ciclo).toHaveBeenCalledTimes(2);
+
+    reconciliacion.detener();
+    await jest.advanceTimersByTimeAsync(config.reconciliacion.intervaloMs * 3);
+    expect(ciclo).toHaveBeenCalledTimes(2);
+    expect(jest.getTimerCount()).toBe(0);
+  });
+
+  test('RD-R13 un ciclo que falla se registra con logger.error y no detiene los siguientes', async () => {
+    const espiaLog = jest.spyOn(logger, 'error').mockImplementation(() => {});
+    const ciclo = jest.spyOn(service, 'reconciliar')
+      .mockRejectedValueOnce(Object.assign(new Error('BD caída'), { code: 'ECONNREFUSED' }))
+      .mockResolvedValue(RESUMEN);
+
+    reconciliacion.iniciar();
+    await jest.advanceTimersByTimeAsync(config.reconciliacion.intervaloMs);
+    expect(espiaLog).toHaveBeenCalledWith(
+      expect.objectContaining({ error: 'BD caída', codigoError: 'ECONNREFUSED' }), expect.any(String),
+    );
+    await jest.advanceTimersByTimeAsync(config.reconciliacion.intervaloMs);
+    expect(ciclo).toHaveBeenCalledTimes(2);
+  });
+
+  test('RD-R13 un ciclo no arranca mientras el anterior sigue en curso en el proceso', async () => {
+    let terminar;
+    const ciclo = jest.spyOn(service, 'reconciliar').mockImplementation(() => new Promise((r) => {
+      terminar = r;
+    }));
+
+    reconciliacion.iniciar();
+    await jest.advanceTimersByTimeAsync(config.reconciliacion.intervaloMs * 3);
+    expect(ciclo).toHaveBeenCalledTimes(1);
+
+    terminar(RESUMEN);
+    await jest.advanceTimersByTimeAsync(config.reconciliacion.intervaloMs);
+    expect(ciclo).toHaveBeenCalledTimes(2);
+    terminar(RESUMEN);
+    await jest.advanceTimersByTimeAsync(0);
+  });
+
+  test('RD-R13 reconciliacion.reconciliar es el ciclo del service', () => {
+    expect(reconciliacion.reconciliar).toBe(service.reconciliar);
   });
 });

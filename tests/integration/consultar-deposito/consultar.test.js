@@ -339,18 +339,131 @@ describe('SPEC-08 consultar-deposito: Billetera USD', () => {
     expect(pen.isDone()).toBe(false);
   });
 
-  test('CD-T13 Billetera USD 500 al verificar titular → 502 BILLETERA_NO_DISPONIBLE', async () => {
+  test('CD-T13 usr-cliente-1 y Billetera USD 500 al verificar titular → 502 BILLETERA_NO_DISPONIBLE', async () => {
     const app = crearApp({ manifest: manifest() });
     await insertarDeposito({ cuenta: BILLETERA_USD_1, moneda: 'USD' });
     const usd = billetera.consultaUsdFalla(BILLETERA_USD_1, { status: 500 });
     const pen = trampaPen();
 
-    const res = await get(app, ID);
+    const res = await get(app, ID, { usuario: 'usr-cliente-1' });
 
     esError(res, 502, 'BILLETERA_NO_DISPONIBLE');
     expect(usd.peticiones).toHaveLength(1);
     expect(pen.isDone()).toBe(false);
   });
+
+  test('CD-T14 depósito en PROCESANDO → 200 con ese estado; sin llamadas a POST /depositos/usd '
+    + '(CD-R08)', async () => {
+    const app = crearApp({ manifest: manifest() });
+    await insertarDeposito({
+      cuenta: BILLETERA_USD_1, moneda: 'USD', usuario: 'usr-agente-1', estado: 'PROCESANDO',
+    });
+    const antes = (await pool.query('SELECT * FROM depositos')).rows;
+    const consulta = billetera.billeteraUsdExiste(BILLETERA_USD_1);
+    // Interceptores de acreditación preparados: ninguno debe consumirse.
+    const postUsd = billetera.acreditaUsdOk();
+    const postUsdReplay = billetera.acreditaUsdReplay();
+    const pen = trampaPen();
+
+    // Titular (verifica en billetera con GET) y operador que lo registró (no llama a billetera).
+    const titular = await get(app, ID, { usuario: 'usr-cliente-1' });
+    const operador = await get(app, ID, { usuario: 'usr-agente-1' });
+
+    const esperado = cuerpoEsperado({
+      cuentaDestino: BILLETERA_USD_1, moneda: 'USD', estado: 'PROCESANDO',
+    });
+    expect(titular.status).toBe(200);
+    expect(titular.body).toEqual(esperado);
+    expect(operador.status).toBe(200);
+    expect(operador.body).toEqual(esperado);
+    expect(consulta.peticiones).toHaveLength(1);
+    expect(postUsd.isDone()).toBe(false);
+    expect(postUsd.peticiones).toHaveLength(0);
+    expect(postUsdReplay.isDone()).toBe(false);
+    expect(postUsdReplay.peticiones).toHaveLength(0);
+    expect(pen.isDone()).toBe(false);
+    expect(nock.pendingMocks()).toEqual(expect.arrayContaining([
+      expect.stringContaining('POST'),
+    ]));
+    const despues = (await pool.query('SELECT * FROM depositos')).rows;
+    expect(despues).toEqual(antes);
+    expect(despues[0].estado).toBe('PROCESANDO');
+  });
+
+  // Los titulares de las billeteras BLOCKED/CLOSED de SPEC-02 §4 (usr-bloqueada, usr-cerrada) no
+  // están en tests/helpers/tokens.js (solo los 5 usuarios de §4): el token se firma aquí con la
+  // misma clave de prueba (precedente SEG-R06), con rol CLIENTE (el único que verifica titular,
+  // CD-R03).
+  function tokenTitular(sub) {
+    const fs = require('node:fs');
+    const path = require('node:path');
+    const jwt = require('jsonwebtoken');
+    const privada = fs.readFileSync(path.join(__dirname, '..', '..', '.tmp', 'privada.pem'), 'utf8');
+    return jwt.sign({
+      sub,
+      roles: ['CLIENTE'],
+      iss: config.jwt.issuer,
+      aud: config.jwt.audience,
+      exp: Math.floor(Date.now() / 1000) + 3600,
+    }, privada, { algorithm: 'RS256', noTimestamp: true });
+  }
+
+  test.each([
+    ['CD-T15', 'BLOCKED', '33333333-3333-4333-8333-333333333333', 'usr-bloqueada', 'billeteraUsdBloqueada'],
+    ['CD-R09', 'CLOSED', '44444444-4444-4444-8444-444444444444', 'usr-cerrada', 'billeteraUsdCerrada'],
+  ])('%s titular de una billetera %s (%s, %s) consulta su depósito → 200', async (_id, estado, wallet,
+    titular, helper) => {
+    const app = crearApp({ manifest: manifest() });
+    await insertarDeposito({ cuenta: wallet, moneda: 'USD', usuario: 'usr-cajero-1', canal: 'VENTANILLA' });
+    const usd = billetera[helper](wallet);
+    const pen = trampaPen();
+    const leer = jest.spyOn(pipeline, 'leerExtensiones');
+
+    const res = await request(app).get(`/api/v1/depositos/${ID}`)
+      .set('Authorization', `Bearer ${tokenTitular(titular)}`)
+      .set('X-Correlation-Id', `cd-${estado.toLowerCase()}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual(cuerpoEsperado({
+      cuentaDestino: wallet, moneda: 'USD', canal: 'VENTANILLA',
+    }));
+    expect(usd.peticiones).toHaveLength(1);
+    expect(pen.isDone()).toBe(false);
+    const [, contexto] = leer.mock.calls[0];
+    expect(contexto.cuenta).toEqual({
+      numero: wallet,
+      estado: estado === 'BLOCKED' ? 'BLOQUEADA' : 'CERRADA',
+      moneda: 'USD',
+      titularId: titular,
+    });
+  });
+
+  test('CD-T15 control: otro CLIENTE (usr-cliente-1) no ve el depósito a la billetera BLOCKED de '
+    + 'usr-bloqueada → 404', async () => {
+    const app = crearApp({ manifest: manifest() });
+    const wallet = '33333333-3333-4333-8333-333333333333';
+    await insertarDeposito({ cuenta: wallet, moneda: 'USD', usuario: 'usr-cajero-1', canal: 'VENTANILLA' });
+    const usd = billetera.billeteraUsdBloqueada(wallet);
+
+    const res = await get(app, ID, { usuario: 'usr-cliente-1' });
+
+    esError(res, 404, 'DEPOSITO_NO_ENCONTRADO');
+    expect(usd.peticiones).toHaveLength(1);
+  });
+
+  test('CD-R09 usr-cliente-1 titular de la cuenta PEN BLOQUEADA 0011-0123-000003 consulta su depósito → 200',
+    async () => {
+      const app = crearApp({ manifest: manifest() });
+      const cuenta = '0011-0123-000003';
+      await insertarDeposito({ cuenta, usuario: 'usr-cajero-1', canal: 'VENTANILLA' });
+      const consulta = billetera.cuentaActiva(cuenta);
+
+      const res = await get(app, ID, { usuario: 'usr-cliente-1' });
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual(cuerpoEsperado({ cuentaDestino: cuenta, canal: 'VENTANILLA' }));
+      expect(consulta.peticiones).toHaveLength(1);
+    });
 });
 
 describe('SPEC-08 consultar-deposito: reglas', () => {

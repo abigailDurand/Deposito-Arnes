@@ -23,6 +23,7 @@ function nuevoDeposito() {
     canal: 'AGENTE',
     referencia: null,
     usuarioId: 'usr-agente-1',
+    titularId: 'usr-cliente-1',
     montoAcreditar: new Decimal('150.00'),
     monedaAcreditar: 'PEN',
     extensiones: {},

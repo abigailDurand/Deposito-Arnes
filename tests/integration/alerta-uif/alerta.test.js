@@ -311,3 +311,90 @@ describe('SPEC-12 alerta-uif: umbral USD con Billetera USD', () => {
     expect(await alertas()).toHaveLength(0);
   });
 });
+
+// SPEC-12 v1.3, UIF-R01: la reconciliación (RD-R13) ejecuta los post-procesos una sola vez por
+// depósito. SPEC-02 §4: aaaaaaaa-… / usr-pendiente (202 y luego COMPLETADO) y bbbbbbbb-… /
+// usr-pendiente-falla (202 y luego FALLIDO). Monto sobre UIF_UMBRAL_USD (300.00), dentro del
+// límite VENTANILLA USD (15000.00).
+describe('SPEC-12 v1.3 alerta-uif: reconciliación (UIF-R01, RD-R13)', () => {
+  const reconciliacion = require('../../../src/modules/registrar-deposito/reconciliacion');
+  const WALLET_PENDIENTE = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+  const WALLET_PENDIENTE_FALLA = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+
+  // POST que Billetera USD deja en 202 VALIDADO; luego se envejece la fila más allá de
+  // RECONCILIACION_ANTIGUEDAD_MS para que la reconciliación la tome.
+  async function depositoPendiente(app, cuentaDestino, clave) {
+    billetera.billeteraUsdExiste(cuentaDestino);
+    const pendiente = billetera.acreditaUsdPendiente();
+    const res = await post(app, {
+      monto: '5000.00', clave, body: { ...BODY_USD, cuentaDestino },
+    });
+    expect(res.status).toBe(202);
+    expect(pendiente.peticiones).toHaveLength(1);
+    expect(await depositos()).toEqual([
+      { id: res.body.id, monto: '5000.00', estado: 'PROCESANDO' },
+    ]);
+    expect(await alertas()).toHaveLength(0);
+    await esperarAuditoria();
+    await pool.query(
+      "UPDATE depositos SET actualizado_en = now() - interval '1 minute' WHERE id = $1",
+      [res.body.id],
+    );
+    return res.body.id;
+  }
+
+  test('UIF-R01 PROCESANDO → reconciliación COMPLETADO → 1 alerta; 2.ª reconciliación y replay no generan otra',
+    async () => {
+      const app = crearApp({ manifest: manifest() });
+      const id = await depositoPendiente(app, WALLET_PENDIENTE, 'uif-r01-reconcilia-ok');
+      const replay = billetera.acreditaUsdReplay({ estado: 'COMPLETADO' });
+
+      await expect(reconciliacion.reconciliar())
+        .resolves.toEqual({ completados: 1, fallidos: 0, pendientes: 0 });
+
+      expect(replay.peticiones).toHaveLength(1);
+      expect(replay.peticiones[0].body.cliente_id).toBe('usr-pendiente');
+      expect(await depositos()).toEqual([{ id, monto: '5000.00', estado: 'COMPLETADO' }]);
+      const filas = await alertas();
+      expect(filas).toEqual([{
+        id: expect.stringMatching(/^[0-9a-f-]{36}$/),
+        deposito_id: id,
+        monto: '5000.00',
+        moneda: 'USD',
+        umbral: '300.00',
+        estado_reporte: 'PENDIENTE',
+      }]);
+
+      // Segunda reconciliación: ya no toma el depósito, no acredita ni alerta otra vez.
+      const otra = billetera.acreditaUsdReplay({ estado: 'COMPLETADO' });
+      await expect(reconciliacion.reconciliar())
+        .resolves.toEqual({ completados: 0, fallidos: 0, pendientes: 0 });
+      expect(otra.peticiones).toHaveLength(0);
+      expect(await alertas()).toEqual(filas);
+
+      // Replay de la petición original (misma Idempotency-Key): no vuelve a ejecutar post-procesos.
+      const credito = billetera.acreditaUsdReplay({ estado: 'COMPLETADO' });
+      const repetido = await post(app, {
+        monto: '5000.00', clave: 'uif-r01-reconcilia-ok',
+        body: { ...BODY_USD, cuentaDestino: WALLET_PENDIENTE },
+      });
+      expect(repetido.body.id).toBe(id);
+      expect(credito.peticiones).toHaveLength(0);
+      expect(await depositos()).toEqual([{ id, monto: '5000.00', estado: 'COMPLETADO' }]);
+      expect(await alertas()).toEqual(filas);
+    });
+
+  test('UIF-R01 PROCESANDO → reconciliación FALLIDO (RECHAZADO) → 0 alertas', async () => {
+    const app = crearApp({ manifest: manifest() });
+    const id = await depositoPendiente(app, WALLET_PENDIENTE_FALLA, 'uif-r01-reconcilia-falla');
+    const replay = billetera.acreditaUsdReplay({ estado: 'FALLIDO' });
+
+    await expect(reconciliacion.reconciliar())
+      .resolves.toEqual({ completados: 0, fallidos: 1, pendientes: 0 });
+
+    expect(replay.peticiones).toHaveLength(1);
+    expect(replay.peticiones[0].body.cliente_id).toBe('usr-pendiente-falla');
+    expect(await depositos()).toEqual([{ id, monto: '5000.00', estado: 'FALLIDO' }]);
+    expect(await alertas()).toHaveLength(0);
+  });
+});

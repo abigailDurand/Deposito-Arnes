@@ -231,11 +231,15 @@ describe('SPEC-06 · crearApp (PIP-R11)', () => {
     expect(app.get('trust proxy')).toBe(config.trustProxy);
   });
 
-  test('PIP-R12 crearApp no inicia la tarea de limpieza', () => {
+  test('PIP-R12 crearApp no inicia tareas (ni limpieza de claves ni reconciliación)', () => {
     const limpiarClaves = require('../../src/core/tareas/limpiarClaves');
+    const reconciliacion = require('../../src/modules/registrar-deposito/reconciliacion');
     const iniciar = jest.spyOn(limpiarClaves, 'iniciar');
+    const iniciarReconciliacion = jest.spyOn(reconciliacion, 'iniciar');
     crearApp({ manifest: manifest() });
     expect(iniciar).not.toHaveBeenCalled();
+    expect(iniciarReconciliacion).not.toHaveBeenCalled();
     iniciar.mockRestore();
+    iniciarReconciliacion.mockRestore();
   });
 });

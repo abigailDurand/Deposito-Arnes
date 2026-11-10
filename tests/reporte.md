@@ -2,55 +2,70 @@
 
 ## SPEC-00
 
-- **Agente:** tester · **Fecha:** 2026-11-02 · **Feature:** 0 (`proyecto`) · **RETRABAJO** (`retrabajo: true`, integración Billetera USD; ver `progress/impl_00.md`)
-- **Ejecución:** `bash init.sh` completo (PostgreSQL arriba) → `Test Suites: 23 passed, 23 total` · `Tests: 357 passed, 357 total` · "Entorno listo".
+- **Agente:** tester · **Fecha:** 2026-11-09 · **Feature:** 0 (`proyecto`) · **RETRABAJO v1.3** (`retrabajo: true`; solo §5, variables de entorno; ver `progress/impl_00.md`, "Retrabajo v1.3")
+- **Ejecución:** `bash init.sh` completo (PostgreSQL arriba) → `Test Suites: 23 passed, 23 total` · `Tests: 1 todo, 418 passed, 419 total` ·
+  `[OK] SPEC-00: todos sus casos tienen prueba` · "Entorno listo". Avisos `[WARN]` solo de las features reabiertas (SPEC-01/02/07/08/11), esperados.
 
-### Retrabajo: pruebas obsoletas actualizadas
+### Retrabajo v1.3: pruebas obsoletas actualizadas
 
-El desarrollador añadió `BILLETERA_USD_URL` (obligatoria) y `BILLETERA_USD_TOKEN` (opcional, INT-R02) en `src/config.js`.
-Por eso fallaban 5 pruebas de `tests/core/proyecto.test.js`: `envBase()` no tenía `BILLETERA_USD_URL`. Cambios en ese archivo (no se tocó `src/`):
+`BILLETERA_USD_TOKEN` desaparece de §5 (la sustituyen `BILLETERA_USD_TOKEN_URL` / `CLIENT_ID` / `CLIENT_SECRET`, INT-R13) y entran las `RECONCILIACION_*` (RD-R13).
+Antes de este cambio `init.sh --rapido` daba 3 fallos unitarios, todos por la clave eliminada `billeteraUsd.token`.
 
-- `envBase()` incluye ahora `BILLETERA_USD_URL: 'http://billetera-usd.test'` (las 5 obligatorias de §5).
-- El `test.each` de obligatorias incluye `'BILLETERA_USD_URL'` (si falta → error con su nombre).
-- Prueba nueva: `BILLETERA_USD_TOKEN` opcional → si falta o está vacío, `config.billeteraUsd` = `{ url, token: null }`; si está presente, `token` toma su valor.
+1. `tests/core/proyecto.test.js`: **eliminada** la prueba "BILLETERA_USD_TOKEN opcional ... (INT-R02)" (esperaba `{ url, token }`). Era el único fallo del archivo;
+   el resto (obligatorias, defaults, `UIF_UMBRAL_*`, logger) seguía válido y no se tocó. En su lugar, pruebas nuevas:
+   - `BILLETERA_USD_TOKEN_URL` ausente o vacía → `billeteraUsd` = `{ url, tokenUrl: null, clientId: null, clientSecret: null }`; con CLIENT_ID/SECRET sueltos (sin TOKEN_URL) se ignoran → `null` y no hay error.
+   - `TOKEN_URL` sin CLIENT_ID ni CLIENT_SECRET → `Faltan variables de entorno obligatorias: BILLETERA_USD_CLIENT_ID, BILLETERA_USD_CLIENT_SECRET`.
+   - `TOKEN_URL` con solo una de las dos ausente (o vacía) → error con ese nombre (`test.each`, 2 casos).
+   - Las tres presentes → sus valores.
+   - `BILLETERA_USD_TOKEN` ya no se lee: no aparece la clave `token` ni su valor en la config.
+   - `RECONCILIACION_*` ausentes → `{ intervaloMs: 30000, antiguedadMs: 10000, alertaMs: 3600000 }`; explícitas → enteros; `'1h'` en cada una → error con su nombre (`test.each`, 3 casos).
+2. `tests/unit/integraciones/billeteraClient.test.js` (INT-T15, **de SPEC-02**), ajuste mínimo sin reescribir el caso:
+   - Prueba "sin BILLETERA_USD_TOKEN" (~l. 549-561): solo cambia `expect(config.billeteraUsd.token).toBeNull()` → `expect(config.billeteraUsd.tokenUrl).toBeNull()`
+     (y el nombre dice `BILLETERA_USD_TOKEN_URL`). El resto de aserciones (sin `Authorization`, `X-Correlation-Id`) sigue igual y pasa.
+   - Prueba "con BILLETERA_USD_TOKEN → Bearer token-usd-de-prueba" (~l. 563): **obsoleta** (la variable ya no existe y `src/core/clients/billeteraClient.js:52`
+     lee `config.billeteraUsd.token`, ahora `undefined`, así que nunca envía `Authorization` a USD). Convertida en
+     `test.todo('INT-T15 Billetera USD con BILLETERA_USD_TOKEN_URL → lleva Authorization Bearer con token OAuth (espera SPEC-02)')`.
+   - **Pendiente para SPEC-02:** rehacer INT-T15 con OAuth (INT-R13) e INT-T16..T19 cuando desarrolladorback implemente el cliente OAuth.
 
 ### Casos cubiertos
 
 | Caso | Archivo | Resultado |
 |---|---|---|
 | PRY-T01 (`GET /health` sin token → 200 `{ "estado": "ok" }`) | `tests/core/proyecto.test.js` | ✅ |
-| PRY-T02 (`cargarConfig` sin `DATABASE_URL` → error con `DATABASE_URL`) | `tests/core/proyecto.test.js` | ✅ |
-| PRY-T02 (`require('src/config')` sin `DATABASE_URL` en `process.env` → lanza error y el servicio no arranca) | `tests/core/proyecto.test.js` | ✅ |
+| PRY-T02 (`cargarConfig` sin `DATABASE_URL` → error con `DATABASE_URL`; `require` sin la variable → no arranca) | `tests/core/proyecto.test.js` | ✅ |
 | PRY-T03 (`enmascararCuenta('0011-0123-456789')` → `'****-****-456789'`) | `tests/core/proyecto.test.js` | ✅ |
 
-Pruebas extra (sin id, basadas en SPEC-00 §2/§5 y PRY-R06/R10), en el mismo archivo y todas ✅:
-
-- Obligatorias `JWT_PUBLIC_KEY`, `BILLETERA_URL`, `BILLETERA_TOKEN`, `BILLETERA_USD_URL` ausentes → error con su nombre; vacía cuenta como ausente.
-- `BILLETERA_USD_TOKEN` opcional: ausente o vacío → `null`; presente → su valor (**nueva en el retrabajo**).
-- Valores por defecto de §5 y sobrescritura explícita (`config.billetera` mantiene su forma `{ url, token, timeoutMs }`).
-- `UIF_UMBRAL_*` opcionales: ausentes → `null`; presentes → string.
-- `JWT_PUBLIC_KEY` con `\n` escritos → saltos de línea reales; entero inválido (`PORT=abc`) → error con el nombre de la variable.
-- `enmascararCuenta` sin guiones y con un valor no string; el logger redacta `authorization`.
+Pruebas extra de §5 (sin id) en `tests/core/proyecto.test.js`, todas ✅: obligatorias ausentes/vacías, defaults y sobrescritura, OAuth USD y
+`RECONCILIACION_*` (arriba), `UIF_UMBRAL_*`, `JWT_PUBLIC_KEY` con `
+`, entero inválido, logger.
 
 ### Casos en `test.todo`
 
-Ninguno.
+- Ninguno de SPEC-00.
+- 1 de SPEC-02 (INT-T15 con token OAuth), en `tests/unit/integraciones/billeteraClient.test.js`; espera el retrabajo de SPEC-02.
 
 ### Pruebas fallidas
 
-Ninguna (tras la actualización, las 5 pruebas obsoletas pasan).
+Ninguna en la corrida final.
+
+Observación (no atribuible a este retrabajo, que solo toca pruebas unitarias): en 2 de 5 corridas completas (`init.sh` / `npm test`) fallaron
+pruebas de integración por `error: deadlock detected` en `TRUNCATE` de `limpiar()` (`tests/helpers/db.js:17`), primero en
+`tests/integration/idempotencia/idempotencia.test.js` (IDE-T04, billetera que tarda 2 s) y luego en cascada. Sin otros clientes en la BD.
+`--selectProjects integration --runInBand` pasó 2/2 y las 3 últimas corridas completas pasaron. Parece una petición/transacción
+de una prueba anterior que sigue viva cuando empieza el `TRUNCATE` (intermitente). Conviene que el líder lo vigile (SPEC-05/SPEC-02).
 
 ### Cobertura (`src/core/` y `src/modules/`)
 
-Corrida completa del retrabajo: All files 99.7 % stmts / 95.01 % branch / 99.19 % funcs / 99.83 % lines;
-`core` 99.46 % stmts, todos los `modules/*` ≥ 98.68 % stmts. Supera el umbral del 80 %.
-`src/config.js` queda fuera de `collectCoverageFrom` (así lo define `jest.config.js`), pero las pruebas de arriba recorren sus ramas nuevas (`BILLETERA_USD_URL` obligatoria, token `null`/presente).
+All files 99.58 % stmts / 94.84 % branch / 99.23 % funcs / 99.84 % lines; `core` 99.46 % stmts; todos los `modules/*` ≥ 98.7 % stmts. Supera el 80 %.
+`src/core/clients/billeteraClient.js` queda con ramas sin cubrir en l. 52-69 y 145 (incluida la del token USD en l. 52, inalcanzable hasta SPEC-02); líneas 100 %.
+`src/config.js` queda fuera de `collectCoverageFrom` (así lo define `jest.config.js`); las pruebas nuevas recorren todas sus ramas de v1.3.
 
 ## SPEC-01
 
-- **Agente:** tester · **Fecha:** 2026-10-30 · **Feature:** 1 (`dominio`)
-- **Ejecución:** `bash init.sh` completo → `EXIT=0` (PostgreSQL real, `deposito_test`).
-  `[OK] SPEC-01: todos sus casos tienen prueba`. `Test Suites: 4 passed · Tests: 1 todo, 42 passed, 43 total`.
+- **Agente:** tester · **Fecha:** 2026-11-09 · **Feature:** 1 (`dominio`) · **Retrabajo v1.2** (spec 1.1 → 1.2: `titular_id`, DOM-R10 ampliada, DOM-R11, DOM-R12, DOM-T09).
+- **Ejecución:** `bash init.sh` completo → `EXIT=0` (PostgreSQL real, `deposito_test`, esquema aplicado por `globalSetup` con la columna nueva).
+  `[OK] SPEC-01: todos sus casos tienen prueba`. `Test Suites: 23 passed · Tests: 1 todo, 421 passed, 422 total`.
+  Los `[WARN]` que siguen son de otras features reabiertas (SPEC-02 INT-T16..T19, SPEC-07 RD-T19..T24, SPEC-08 CD-T14/T15, SPEC-11 CM-T09), no de SPEC-01.
 
 ### Casos cubiertos
 
@@ -65,20 +80,26 @@ Corrida completa del retrabajo: All files 99.7 % stmts / 95.01 % branch / 99.19 
 | DOM-T07 controller `async` que lanza envuelto en `manejar` → 403 sin colgarse (timeout 2 s) (+ sin error responde normal) | `tests/unit/dominio/errores.test.js` | ✅ |
 | DOM-T08 `enTransaccion` que inserta 2 filas y lanza → rechaza con el mismo error y `count(*) = '0'` | `tests/integration/dominio/transaccion.test.js` | ✅ |
 | DOM-T08 (variantes) sin error → COMMIT y devuelve el resultado; error de BD (`CHECK monto > 0`) → rollback; ROLLBACK que falla → relanza el original, loguea y el pool sigue usable | `tests/integration/dominio/transaccion.test.js` | ✅ |
+| **DOM-T09** (nuevo v1.2) `aJson` con `titular_id: 'usr-cliente-1'` → sin clave `titular_id` ni `titularId`, el valor no aparece en el JSON y la forma sigue siendo la exacta de §5 | `tests/unit/dominio/depositoMapper.test.js:55` | ✅ |
 
-Pruebas extra (sin id de caso, justificadas por reglas de SPEC-01), todas ✅:
+Pruebas extra (sin id de caso, con el nombre de la regla, como las DOM-R existentes), todas ✅:
 
 - DOM-R06: `ErrorApp` toma status/mensaje del catálogo; código fuera del catálogo lanza.
 - §5: los 16 códigos del catálogo del core con su status.
 - DOM-R07: sin `req.correlationId` la clave sale como `null`; con `res.headersSent` delega en `next(err)`.
 - DOM-R09: código nuevo registrado → `manejadorErrores` lo responde; definición inválida → lanza sin dejar el catálogo a medias.
 - DOM-R10: fila completa → objeto exacto de §5 (camelCase, sin `usuario_id` ni `*_acreditar`); montos `"0.01"`, `"10.5"`→`"10.50"`; fechas con offset → ISO UTC; `extensiones` tal cual; fila real de PostgreSQL por `aJson` (integración).
+- **DOM-R11** (nuevo v1.2, integración, `tests/integration/dominio/transaccion.test.js:102` y `:123`):
+  - `information_schema.columns`: `depositos.titular_id` existe, `character varying(100)`, `is_nullable = 'YES'`; no hay ninguna `FOREIGN KEY` sobre esa columna.
+  - `INSERT` sin `titular_id` (lista de columnas antigua) → `NULL`; `INSERT` con `titular_id = 'usr-cliente-1'` (billetera USD `11111111-…`, SPEC-02 §4) → se guarda; esa fila real por `aJson` no expone el titular.
 
-Nota de ubicación: DOM-T08 necesita PostgreSQL real, por eso va en `tests/integration/dominio/` (SPEC-00 §6) además de los dos archivos del §2. `correlationId` lo asigna un middleware del propio test (SPEC-03 aún no existe). Datos: solo SPEC-02 §4 (`0011-0123-456789`, `usr-agente-1`).
+### Pruebas obsoletas por v1.2
+
+Ninguna. Revisadas las de `tests/unit/dominio/` y `tests/integration/dominio/`: la columna nueva es nullable y todos los `INSERT` usan lista explícita de columnas; DOM-R12 no cambia el `CHECK` de `estado` (sigue sin `VALIDADO`), así que DOM-T08 (`CHECK`) y la prueba de fila real siguen siendo válidas. DOM-R12 (permanencia en `PROCESANDO`, confirmación diferida) no tiene caso en SPEC-01; su comportamiento es de SPEC-07 (RD-R12).
 
 ### Casos en `test.todo`
 
-Ninguno de SPEC-01. (Sigue PRY-T01 de SPEC-00, espera SPEC-06.)
+Ninguno de SPEC-01. (El único `test.todo` del repo es INT-T15, de SPEC-02, que espera su retrabajo.)
 
 ### Pruebas fallidas
 
@@ -87,151 +108,162 @@ Ninguna.
 ### Cobertura (`src/core/` y `src/modules/`)
 
 ```
-----------------------|---------|----------|---------|---------|-------------------
-File                  | % Stmts | % Branch | % Funcs | % Lines | Uncovered Line #s
-----------------------|---------|----------|---------|---------|-------------------
-All files             |   98.73 |    94.44 |    92.3 |   98.63 |
- core                 |   98.41 |    91.66 |    90.9 |    98.3 |
-  db.js               |   94.73 |      100 |      50 |   94.73 | 14
-  depositoMapper.js   |     100 |    83.33 |     100 |     100 | 24
-  errores.js          |     100 |    92.85 |     100 |     100 | 62
-  logger.js           |     100 |      100 |     100 |     100 |
- core/middlewares     |     100 |      100 |     100 |     100 |
-  manejadorErrores.js |     100 |      100 |     100 |     100 |
-----------------------|---------|----------|---------|---------|-------------------
-```
-
-- `src/core/`: ≥ 90 % en todas las métricas (umbral 80 % cumplido, sin cambios en `jest.config.js`).
-- Sin cubrir: `db.js:14` (listener `pool.on('error')` de conexión inactiva), `depositoMapper.js:24` (rama `aJson(fila)` sin `extensiones`, decisión del desarrollador ligada a HD-R08; se probará con SPEC-08), `errores.js:62` (rama `errores` nulo en `registrarErrores`).
-- `src/modules/`: sin código todavía.
-
-## SPEC-02
-
-- **Agente:** tester · **Fecha:** 2026-11-03 · **Feature:** 2 (`integraciones`) · **Retrabajo** spec v2.0 (Billetera USD), rama `inte_biUsd`.
-- **Ejecución:** `bash init.sh` completo con PostgreSQL, 2 corridas seguidas, las dos en verde → `[OK] SPEC-02: todos sus casos tienen prueba`,
-  `Test Suites: 23 passed · Tests: 1 todo, 379 passed, 380 total`, `[OK] Entorno listo` (ver "Pruebas fallidas").
-- Todo SPEC-02 es unitario con nock (`nock.disableNetConnect()`, `cleanAll` + `abortPendingRequests` y
-  `jest.restoreAllMocks()` en cada prueba), con los helpers PEN y USD de `tests/helpers/billetera.js`.
-  `BILLETERA_URL` (`http://billetera.test`) y `BILLETERA_USD_URL` (`http://billetera-usd.test`) son hosts distintos en `tests/setup/env.js`, así que nock distingue a qué billetera va cada llamada.
-- **Variables de entorno distintas sin tocar `config.js` ni `tests/setup/`:** `clienteCon({...})` carga el
-  cliente dentro de `jest.isolateModules` con el `process.env` cambiado solo durante la carga y luego lo restaura
-  (`BILLETERA_TIMEOUT_MS=100` para los timeouts con nock retrasado 1000 ms; `BILLETERA_USD_TOKEN` para INT-T15).
-- El mock Express (`mocks/billetera/`) es para pruebas manuales: no tiene pruebas automáticas (§6.1).
-
-### Casos cubiertos (`tests/unit/integraciones/billeteraClient.test.js`)
-
-| Caso | Qué se comprueba | Resultado |
-|---|---|---|
-| INT-T01 | PEN 200 → `{ numero, estado, moneda, titularId }` exacto; además `000002` → ACTIVA **PEN** `usr-cliente-2` (dato nuevo de §4) y `000003` BLOQUEADA | ✅ |
-| INT-T02 | PEN 404 → `null` | ✅ |
-| INT-T03 | PEN 500 y timeout → `ErrorApp` `BILLETERA_NO_DISPONIBLE` (502) | ✅ |
-| INT-T04 | PEN `acreditar` 201 y 409 → `undefined` | ✅ |
-| INT-T05 | PEN 400, 500 y timeout → `BILLETERA_NO_DISPONIBLE`; 1 sola petición, el interceptor de reintento queda sin usar | ✅ |
-| INT-T06 | PEN: `Authorization: Bearer token-de-prueba` + `X-Correlation-Id` (también en 404 y 500) | ✅ |
-| INT-T07 | PEN `Decimal(150)` → body exacto `{ depositoId, monto: "150.00", moneda: "PEN", concepto: "DEPOSITO" }` | ✅ |
-| INT-T08 | USD 200 → exactamente `{ numero: id, estado: "ACTIVA", moneda: "USD", titularId: user_id }` para `11111111-…` (`usr-cliente-1`) y `22222222-…` (`usr-cliente-2`); sin `balance`/`nombre`; espías en todos los niveles del logger: ni `350.75` ni `Cliente Uno` se loguean | ✅ |
-| INT-T09 | USD 404 → `null`; 500 y timeout → `BILLETERA_NO_DISPONIBLE` | ✅ |
-| INT-T10 | USD 201 `COMPLETADO` → resuelve con `Idempotency-Key` = `depositoId`; 200 replay `COMPLETADO` → resuelve, misma clave y **body idéntico** al de la primera llamada (INT-R06) | ✅ |
-| INT-T11 | USD 409 `IDEMPOTENCY_CONFLICT` → `BILLETERA_NO_DISPONIBLE` y `logger.error` 1 vez con `{ correlationId, status: 409 }`; 201 `PENDIENTE` → `BILLETERA_NO_DISPONIBLE` | ✅ |
-| INT-T12 | USD 400, 500 (un `test.each` por status, cada uno con nock limpio) y timeout → `BILLETERA_NO_DISPONIBLE`; 1 sola petición, el interceptor de reintento queda sin usar | ✅ |
-| INT-T13 | USD `Decimal(150)` → body exacto `{ cliente_id, cuenta_destino_id, monto: "150.00", moneda: "USD", metodo_origen, referencia_externa: depositoId }`, sin `concepto`; VENTANILLA→EFECTIVO, AGENTE→EFECTIVO, APP→TRANSFERENCIA con `cliente_id` = `usuarioId` | ✅ |
-| INT-T14 | `0011-0123-456789` → consulta y crédito solo a PEN (interceptores comodín GET/POST en la URL USD sin usar); UUID → solo a USD (comodines en la URL PEN sin usar) | ✅ |
-| INT-T15 | Sin `BILLETERA_USD_TOKEN` (`config.billeteraUsd.token === null`) → consulta y crédito USD sin `Authorization`; con token → `Bearer token-usd-de-prueba` y la PEN sigue con `BILLETERA_TOKEN`; `X-Correlation-Id` siempre (también en 404 y 500) | ✅ |
-
-Pruebas extra (reglas de SPEC-02 v2.0), todas ✅:
-
-- INT-R11: consulta PEN con 400, con 200 y cuerpo no objeto y con error de red → error.
-- INT-R12: `acreditar` PEN con 200 → resuelve; montos límite `"0.01"` y `Decimal("10.5")` → `"10.50"` (a `000002`, ahora PEN).
-- INT-R04: consulta USD con 400 y con 200 y cuerpo no objeto → error.
-- INT-R05: error de red al acreditar USD → error.
-
-**No se prueba un UUID en mayúsculas.** INT-R10 dice "UUID → Billetera USD" sin definir mayúsculas; el cliente
-(`RE_UUID` sin `/i`) lo manda a PEN. No se fija ninguna de las dos conductas en una prueba.
-
-### Pruebas actualizadas o eliminadas por el contrato nuevo (`0011-0123-000002` pasó de USD a PEN)
-
-| Prueba | Antes | Ahora |
-|---|---|---|
-| `tests/unit/integraciones/billeteraClient.test.js` · INT-T01 (cuentas de §4) | `000002` → `moneda: 'USD'` (fallaba) | `000002` → ACTIVA PEN `usr-cliente-2` |
-| mismo archivo · prueba de montos límite | `000002` como cuenta USD por la ruta PEN (`concepto` en USD) | `000002` PEN, body exacto; renombrada INT-R07 → INT-R12 |
-| mismo archivo · pruebas extra | ids de reglas viejas (INT-R04/R05 para PEN) | renombradas a INT-R11/INT-R12 (PEN) |
-| `tests/integration/registrar-deposito/registrar.test.js` · `verificarTitular …` | cajero por VENTANILLA a `000002` en USD → 201 (fallaba con 422) | cajero por VENTANILLA a `000002` (PEN, cuenta **ajena**) → 201 PEN; la constante `CUENTA_USD` pasa a `CUENTA_AJENA`. El caso con cuenta USD (UUID) le corresponde al retrabajo de SPEC-07 (RD-T13..T18) |
-| `tests/integration/conversion-moneda/conversion.test.js` · `CM-R03 PEN → USD usa la fila PEN→USD` | depósito PEN a `000002` como cuenta USD (fallaba: sin conversión) | **`test.todo`**: el schema de SPEC-07 todavía solo acepta `0000-0000-000000` (`src/modules/registrar-deposito/schema.js:7`), así que no se puede hacer un depósito a una billetera USD hasta el retrabajo de SPEC-07. CM-R05 PEN→USD sigue cubierto en `tests/unit/conversion-moneda/conversion.test.js`. Se quitó la constante `CUENTA_USD`, que ya no se usaba |
-
-No se tocaron las pruebas que siguen en verde pero quedaron obsoletas en otras specs (lista en `progress/impl_02.md`):
-consultar-deposito, historial-depositos, seguridad/permisos, alerta-uif y la constante `CUENTA_USD` de esas
-suites. Se retrabajan con su spec.
-
-### Casos en `test.todo`
-
-- Ninguno de SPEC-02.
-- Nuevo: `CM-R03 PEN → USD a billetera 22222222-…` (SPEC-11, `tests/integration/conversion-moneda/conversion.test.js`), **espera el retrabajo de SPEC-07** (`cuentaDestino` UUID).
-
-### Pruebas fallidas
-
-Ninguna en la corrida final de `bash init.sh`.
-
-**Deadlock de `registrar.test.js` corregido (cambio requerido en `progress/review_02.md`).** La auditoría
-escribe en `res.on('finish')` (`src/core/middlewares/auditoria.js:74-76`) después de que supertest recibe la respuesta;
-ese INSERT chocaba con el `TRUNCATE … CASCADE` de `limpiar()` (`tests/helpers/db.js:17`) del `beforeEach`
-siguiente (`error: deadlock detected`, 3/3 corridas en la revisión). Arreglo solo en
-`tests/integration/registrar-deposito/registrar.test.js` (no se tocaron `src/` ni los helpers): `afterEach` ahora es
-`async` y espera a `esperarAuditoria()`, igual que `conversion.test.js` pero más estricto. Espera a que el pool de la
-app (`src/core/db`, el mismo que usa la auditoría) no tenga clientes en uso ni en espera
-(`waitingCount === 0 && totalCount === idleCount`) **y** a que el conteo de `auditoria_depositos` no cambie, durante
-2 comprobaciones seguidas (pausas de 25 ms, tope de 2,5 s).
-
-Comprobación: `npx jest tests/integration/registrar-deposito --runInBand` 3 de 3 en verde (22/22), y `bash init.sh`
-completo 2 veces seguidas, las dos en verde:
-
-```
-=== corrida 1 (exit 0)
-[OK]    specs-v2/ intacto (15 archivos)
-[OK]    feature_list.json válido (13 features: pending=0 in_progress=1 done=6 blocked=0 reabierta=6)
-[OK]    SPEC-02: todos sus casos tienen prueba
-[WARN]  SPEC-07 (reabierta) aún sin prueba: RD-T13, RD-T14, RD-T15, RD-T16, RD-T17, RD-T18
-[WARN]  SPEC-08 (reabierta) aún sin prueba: CD-T10, CD-T11, CD-T12, CD-T13
-[WARN]  SPEC-09 (reabierta) aún sin prueba: HD-T09, HD-T10, HD-T11, HD-T12
-[OK]    Alcance de archivos correcto (178 archivos revisados)
-Test Suites: 23 passed, 23 total
-Tests:       1 todo, 379 passed, 380 total
-[OK]    Todas las pruebas en verde (unitarias + integración)
-[OK]    Entorno listo. Puedes empezar a trabajar.
-
-=== corrida 2 (exit 0)
-(mismas líneas [OK]/[WARN] que la corrida 1)
-Test Suites: 23 passed, 23 total
-Tests:       1 todo, 379 passed, 380 total
-[OK]    Todas las pruebas en verde (unitarias + integración)
-[OK]    Entorno listo. Puedes empezar a trabajar.
-```
-
-Las demás suites de integración que hacen peticiones auditadas y no esperan a la auditoría podrían tener el mismo
-problema en teoría (no se vio en estas corridas). La solución general sería esperar en `limpiar()`
-(`tests/helpers/db.js`), pero el tester no puede editar los helpers; queda como sugerencia para el líder.
-
-### Cobertura (`src/core/` y `src/modules/`, corrida final de `init.sh`)
-
-```
+-----------------------------|---------|----------|---------|---------|-------------------
 File                         | % Stmts | % Branch | % Funcs | % Lines | Uncovered Line #s
-All files                    |   99.72 |     95.1 |   99.23 |   99.84 |
+-----------------------------|---------|----------|---------|---------|-------------------
+All files                    |   99.58 |    94.84 |   99.23 |   99.84 |
  core                        |   99.46 |    94.73 |   97.14 |   99.42 |
- core/clients                |     100 |    95.12 |     100 |     100 |
-  billeteraClient.js         |     100 |    95.12 |     100 |     100 | 69,145
+  db.js                      |   94.73 |      100 |      50 |   94.73 | 14
+  depositoMapper.js          |     100 |      100 |     100 |     100 |
+  errores.js                 |     100 |    92.85 |     100 |     100 | 62
+  logger.js                  |     100 |      100 |     100 |     100 |
+ core/clients                |    98.3 |    92.68 |     100 |     100 |
  core/middlewares            |     100 |    94.87 |     100 |     100 |
+  manejadorErrores.js        |     100 |      100 |     100 |     100 |
  core/repositories           |     100 |     87.5 |     100 |     100 |
  core/tareas                 |     100 |      100 |     100 |     100 |
  modules/alerta-uif          |     100 |       80 |     100 |     100 |
  modules/consultar-deposito  |     100 |      100 |     100 |     100 |
  modules/conversion-moneda   |     100 |      100 |     100 |     100 |
- modules/historial-depositos |   98.68 |     91.3 |     100 |     100 |
+ modules/historial-depositos |    98.7 |     91.3 |     100 |     100 |
  modules/limites-por-canal   |     100 |      100 |     100 |     100 |
  modules/registrar-deposito  |     100 |      100 |     100 |     100 |
+-----------------------------|---------|----------|---------|---------|-------------------
 ```
 
-- Umbral de 80 % cumplido en todas las métricas. Las ramas sin cubrir de `billeteraClient.js` solo cambian
-  el detalle del log: `:69` (`err.code || err.message` cuando el error no trae `code`) y `:145` (respuesta USD
-  sin cuerpo objeto).
+- Umbral 80 % cumplido en todas las métricas, sin tocar `jest.config.js`.
+- Sin cubrir en archivos de SPEC-01: `db.js:14` (listener `pool.on('error')` de conexión inactiva), `errores.js:62` (rama `errores` nulo en `registrarErrores`).
+
+### Notas para el leader
+
+- `feature_list.json` (feature 1, acceptance) todavía dice "DOM-T01 a DOM-T08 pasan"; con v1.2 debería decir DOM-T09 (lo anota también el dev en `progress/impl_01.md`).
+- Que `titular_id` se llene al registrar es de SPEC-07 (RD-R08, RD-R13); hasta su retrabajo los depósitos nuevos quedan con `NULL`. No se prueba aquí.
+
+## SPEC-02
+
+- **Agente:** tester · **Fecha:** 2026-11-09 · **Feature:** 2 (`integraciones`) · **Retrabajo v2.1** (spec v2.0 → v2.1, Billetera USD v1.2.0: `Wallet.estado`, OAuth client credentials, `acreditar` con resultado `ACREDITADO`/`PENDIENTE`, body sin `cuenta_destino_id`), rama `inte_biUsd`.
+- **Ejecución:** `bash init.sh` completo con PostgreSQL, 3 corridas:
+  - Corrida 1: `EXIT=1` por el deadlock intermitente de `TRUNCATE` (`tests/helpers/db.js:17`), en `tests/integration/idempotencia/idempotencia.test.js` (IDE-T07). Ese archivo no se tocó en este retrabajo (ver "Pruebas fallidas").
+  - Corridas 2 y 3: `EXIT=0`, `Test Suites: 23 passed · Tests: 1 todo, 447 passed, 448 total`, `[OK] SPEC-02: todos sus casos tienen prueba`, `[OK] Entorno listo`.
+  - Los únicos `[WARN]` son de features reabiertas (SPEC-07 RD-T19..T24, SPEC-08 CD-T14/T15, SPEC-11 CM-T09).
+- Todo SPEC-02 es unitario con nock (`nock.disableNetConnect()`; `cleanAll` + `abortPendingRequests` + `jest.restoreAllMocks()` en cada prueba), con los helpers de `tests/helpers/billetera.js` (sin cambios por mi parte).
+- **OAuth sin tocar `config.js` ni `tests/setup/`:** `cargarConfig`/`clienteCon` cargan el cliente en `jest.isolateModules` con las variables de la prueba (`BILLETERA_USD_TOKEN_URL=http://auth-usd.test/oauth2/token`, `CLIENT_ID`, `CLIENT_SECRET`) y restauran el entorno. Así cada carga tiene su caché de token limpia. También devuelven el `logger` de ese registro para espiarlo.
+- **Expiración (INT-T16):** se espía `Date.now` (lo usa el cliente), no se usan timers falsos, para que nock y axios no se cuelguen.
+
+### Pruebas obsoletas por v2.1 (actualizadas)
+
+Todas en `tests/unit/integraciones/billeteraClient.test.js`:
+- `INT-T04` (201 y 409) e `INT-R12` (200): antes "resuelve sin valor"; ahora `toEqual({ estado: 'ACREDITADO' })`.
+- `INT-T10` (201 y 200 replay): antes `toBeUndefined()`; ahora `{ estado: 'ACREDITADO' }`.
+- `INT-T11 201 estado PENDIENTE → BILLETERA_NO_DISPONIBLE`: **eliminada** porque el caso ya no existe en v2.1. La sustituyen los casos 202/200 `VALIDADO` → `PENDIENTE` y 200 `FALLIDO`.
+- `INT-T13` (body exacto y los 3 canales): `datosCreditoUsd` pasa `titularId` en lugar de `usuarioId`. Se espera `cliente_id = titularId` y `canal`, sin `cuenta_destino_id`.
+- `INT-T15` con token: el `test.todo` pasa a ser una prueba real con OAuth.
+
+### Casos cubiertos
+
+Archivo: `tests/unit/integraciones/billeteraClient.test.js` (66 pruebas, todas ✅).
+
+| Caso | Qué comprueba | Resultado |
+|---|---|---|
+| INT-T01..T07 | Billetera PEN (sin cambios de v2.1, salvo el resultado `{ estado: 'ACREDITADO' }` de INT-T04 / INT-R12) | ✅ |
+| INT-T08 | `ACTIVE` → `ACTIVA` (11111111 y 22222222, `toEqual` exacto, sin `balance` ni `nombre`) · `BLOCKED` → `BLOQUEADA` (33333333, `usr-bloqueada`) · `CLOSED` → `CERRADA` (44444444, `usr-cerrada`) · estado desconocido (`SUSPENDED`, y también `ACTIVA` en español) → `BILLETERA_NO_DISPONIBLE` · ni balance ni nombre en los logs, tampoco en el log de fallo | ✅ |
+| INT-T09 | 404 → `null`; 500 y timeout → `BILLETERA_NO_DISPONIBLE` | ✅ |
+| INT-T10 | 201 y 200 (replay) `COMPLETADO` con `movimiento_saldo_id` → `{ estado: 'ACREDITADO' }`; `Idempotency-Key = depositoId`; replay con el mismo body · `COMPLETADO` sin `movimiento_saldo_id` (201 null, 201 ausente, 200 null) → `BILLETERA_NO_DISPONIBLE` | ✅ |
+| INT-T11 | 409 → `BILLETERA_NO_DISPONIBLE` + `logger.error` (status 409) · 202 `VALIDADO` → `{ estado: 'PENDIENTE' }` · 200 `VALIDADO` y 200 `PENDIENTE` → `PENDIENTE` · 200 `FALLIDO` → `BILLETERA_NO_DISPONIBLE` | ✅ |
+| INT-T12 | 400, 500 y timeout → `BILLETERA_NO_DISPONIBLE`; 1 sola llamada (un segundo interceptor idéntico no se consume) | ✅ |
+| INT-T13 | Body exacto del ejemplo de §5: `{ cliente_id: 'usr-cliente-1', monto: '150.00', moneda: 'USD', canal: 'AGENTE', metodo_origen: 'EFECTIVO', referencia_externa }`, sin `concepto` ni `cuenta_destino_id` · VENTANILLA/AGENTE/APP → EFECTIVO/EFECTIVO/TRANSFERENCIA con `canal` y `cliente_id = titularId` (`toEqual` exacto) · `Decimal('10.5')` → `"10.50"` · un `usuarioId` en los datos no llega al body | ✅ |
+| INT-T14 | PEN → solo billetera PEN; UUID → solo Billetera USD | ✅ |
+| INT-T15 | Sin `BILLETERA_USD_TOKEN_URL` → sin `Authorization`, con `X-Correlation-Id` · **con OAuth:** consulta y crédito llevan `Bearer <access_token>` y `X-Correlation-Id`; petición de token con `grant_type=client_credentials`, los 2 scopes y las credenciales (Basic o body) · con OAuth, la PEN sigue con `Bearer token-de-prueba` · 404/500 USD llevan `X-Correlation-Id` | ✅ |
+| INT-T16 | Consulta y crédito seguidos → 1 petición de token (la 2.ª no se consume) · 3 consultas simultáneas → 1 petición · token de 3600 s: a 61 s de expirar se reutiliza; a 59 s se pide otro y se usa el nuevo | ✅ |
+| INT-T17 | Token 401 → `BILLETERA_NO_DISPONIBLE` sin llamar a la billetera; en los logs no aparecen ni el secreto ni el Basic en base64 · token 500, timeout, error de red y 200 sin `access_token` → `BILLETERA_NO_DISPONIBLE` sin `POST` a la billetera · camino con token válido más fallo 500 y 409: hay logs, pero sin token ni secreto | ✅ |
+| INT-T18 | 422 `WALLET_BLOCKED`, `WALLET_CLOSED`, `CUSTOMER_BLOCKED`, `USD_ACCOUNT_NOT_ENABLED` → `CUENTA_INACTIVA` (422); 1 sola llamada | ✅ |
+| INT-T19 | 401 y 403 → `BILLETERA_NO_DISPONIBLE` + `logger.error` con status · con OAuth y 403: el log de error no lleva el token | ✅ |
+
+Pruebas extra (sin id de caso, con el nombre de la regla), todas ✅:
+- INT-R04: 200 sin `user_id` (ausente o `null`) → `BILLETERA_NO_DISPONIBLE` · 400, cuerpo no objeto y error de red → `BILLETERA_NO_DISPONIBLE` · transición (sin `BILLETERA_USD_TOKEN_URL`): `estado` ausente → `ACTIVA`.
+- INT-R05: 429 y 503 → `BILLETERA_NO_DISPONIBLE` sin reintento · otra respuesta (201 `VALIDADO`, 202 `COMPLETADO`, 422 con otro `code`) → `BILLETERA_NO_DISPONIBLE` · error de red.
+- **INT-R14:** un interceptor sobre `POST /wallets/{id}/depositos` (cualquier id) nunca se consume en 3 acreditaciones (201, replay 200, 202 sobre 11111111 y 22222222). Todas van a `POST /api/v1/depositos/usd`.
+- INT-R11/INT-R12: sin cambios.
+
+**No cubierto a propósito:** INT-R04 "`estado` ausente **con** `BILLETERA_USD_TOKEN_URL` → `BILLETERA_NO_DISPONIBLE`". La spec no dice cómo se detecta la "transición (Q7)": es una decisión del desarrollador (`progress/impl_02.md`, Decisiones) que debe confirmar el revisor. Solo pruebo el lado que la spec ata explícitamente a Q7 (sin `TOKEN_URL`, INT-R13).
+
+### Ajustes mínimos en pruebas de otras features (contrato v2.1)
+
+Solo se cambió lo necesario para el contrato nuevo. No se añadió ningún caso RD-T19..T24 ni CM-T09.
+
+**SPEC-07, `tests/unit/registrar-deposito/service.test.js`:**
+1. `RD-T11`: el crédito espera `titularId: 'usr-cliente-1'` (titular de `CUENTA_PEN`) en lugar de `usuarioId: 'usr-agente-1'`.
+2. `RD-T12`: se quita `usuarioId` del `toMatchObject`. Se añade `not.toHaveProperty('usuarioId')`.
+3. `RD-R03/R05`: la lista de claves del depósito incluye `titularId` (SPEC-06 §4 v2), y `toMatchObject` añade `titularId: 'usr-cliente-1'`.
+4. `RD-R08` (reintentar FALLIDO): la fila simulada lleva `titular_id: 'usr-cliente-1'` (columna de SPEC-01 v1.2). Se espera `credito.titularId === 'usr-cliente-1'` y sin `usuarioId`, en lugar de `credito.usuarioId === 'usr-cajero-1'`.
+5. `RD-T13`: el nombre dice `titularId`; las claves del crédito son `[canal, cuenta, depositoId, moneda, monto, titularId]`, con `titularId: 'usr-cliente-1'`.
+6. `RD-T18`: `toMatchObject({ usuarioId: ... })` → `toMatchObject({ canal, moneda })` + `not.toHaveProperty('usuarioId')`. La igualdad completa entre crédito original y reintento se mantiene: pasa porque el mock de `consultarCuenta` de ese bloque da `titularId: null` para 99999999.
+
+**SPEC-07, `tests/integration/registrar-deposito/registrar.test.js`:**
+7. `billeteraFallaExiste()` ya no usa su nock propio (`user_id: null` y sin `estado`, que INT-R04 rechaza). Ahora delega en `billetera.billeteraUsdExiste('99999999-…')` (ACTIVE, `usr-falla`, §4 v2.1).
+8. `RD-T13`: body esperado `{ cliente_id: 'usr-cliente-1', monto, moneda, canal: 'AGENTE', metodo_origen, referencia_externa }`, sin `cuenta_destino_id`.
+9. `RD-T18`: el body original esperado es `{ cliente_id: 'usr-falla', ..., canal: 'AGENTE' }`, sin `cuenta_destino_id`. **La aserción `reintento.body toEqual original.body` se sacó a un `test.todo`** (ver abajo). El resto de RD-T18 sigue como prueba real ✅: 502 FALLIDO, reintento → 201 COMPLETADO con el mismo id, clave TERMINADO, sin nueva consulta, misma `Idempotency-Key`.
+
+**SPEC-11, `tests/integration/conversion-moneda/conversion.test.js`:**
+10. `CM-R03 PEN → USD`: el body ya no espera `cuenta_destino_id` (`not.toHaveProperty`) y espera `canal: 'APP'`.
+
+### Casos en `test.todo`
+
+- `RD-T18 reintento USD → body idéntico al original a Billetera USD (cliente_id = titular guardado)` (`tests/integration/registrar-deposito/registrar.test.js`, después de RD-T18). **Espera el retrabajo de SPEC-07.** Hoy `titular_id` no se guarda (RD-R05), así que el reintento arma el body con `cliente_id: null` y el original lleva `'usr-falla'`. Es el "hueco conocido" que el desarrollador documentó en `progress/impl_02.md`. La causa está en `src/modules/registrar-deposito/service.js:45` (`titularId: fila.titular_id ?? null`) junto con el `INSERT` del repositorio, que no escribe `titular_id`. Al cerrar SPEC-07 hay que convertir este `todo` en prueba otra vez.
+- El `test.todo` anterior de INT-T15 (con token OAuth) ya es una prueba real.
+
+### Pruebas fallidas
+
+Ninguna atribuible al código en las corridas 2 y 3.
+
+Corrida 1: `IDE-T07` (`tests/integration/idempotencia/idempotencia.test.js:96`, en `limpiar()`) falló con `error: deadlock detected` en el `TRUNCATE ... CASCADE` de `tests/helpers/db.js:17`. Es el mismo deadlock intermitente ya anotado en SPEC-00. Pasó al repetir, en 2 de 2 corridas. Parece que una petición o transacción de la prueba anterior (billetera lenta / timeout) sigue viva cuando empieza el `TRUNCATE`. Conviene que el líder lo vigile; no lo arreglo porque es un helper de `tests/`.
+
+### Cobertura (`src/core/` y `src/modules/`)
+
+- All files: 99.6 % stmts / 94.97 % branch / 99.28 % funcs / 99.85 % lines.
+- `core`: 99.46 % stmts. `core/clients`: 100 % stmts / 95.4 % branch.
+- Todos los `modules/*`: ≥ 98.7 % stmts.
+- Supera el 80 % exigido.
+- `src/core/clients/billeteraClient.js`: 100 % líneas y funciones. Solo quedan sin cubrir las ramas de `err.code || err.message` (l. 81, 112) y `res.data && typeof ... : {}` (l. 115, 227), que son fallbacks defensivos.
+
+### Retrabajo v2.2 (2026-11-09)
+
+Cambios de spec probados: INT-R04, INT-R05, INT-R13, INT-T11 e INT-T19. Solo cambió
+`tests/unit/integraciones/billeteraClient.test.js`. No toqué `src/`, `mocks/`, helpers ni `specs-v2/`.
+
+**Prueba obsoleta actualizada:**
+- `INT-T11 acreditar con 200 (replay) FALLIDO`: antes esperaba `BILLETERA_NO_DISPONIBLE`. Ahora espera que
+  resuelva `{ estado: 'RECHAZADO' }` con 1 sola petición (`Idempotency-Key` = `depositoId`). Un segundo
+  interceptor idéntico no recibe nada, así que no hay reintento (INT-R06).
+
+**Pruebas nuevas:**
+- `INT-T19 acreditar con 401`: lanza `BILLETERA_NO_DISPONIBLE` y escribe 1 log `error` con `status: 401`.
+  Hace 1 sola petición, con el primer token, y no pide otro token en esa llamada. La siguiente `acreditar`
+  pide un token nuevo (2.ª petición de token) y lo envía como Bearer, y resuelve `ACREDITADO`.
+- `INT-T19 acreditar con 403`: lanza `BILLETERA_NO_DISPONIBLE`. La siguiente `acreditar` reutiliza el primer
+  token, sin una 2.ª petición de token.
+- `INT-T19 consultarCuenta con 401 y luego 403`: el 401 descarta el token y la consulta siguiente usa uno
+  nuevo. El 403 no lo descarta: la tercera consulta reutiliza el segundo token y no hay 3.ª petición de token.
+- En las tres pruebas, ni los tokens ni el secreto aparecen en ningún nivel de log (PRY-R10).
+- `INT-R04 con BILLETERA_USD_TOKEN_URL (fuera de la transición Q7)`: una billetera sin `estado` da
+  `BILLETERA_NO_DISPONIBLE`. Como control, con el mismo cliente y el `estado` presente devuelve `ACTIVA`. La
+  prueba que ya existía para la transición (sin `BILLETERA_USD_TOKEN_URL`, sin `estado` → `ACTIVA`) sigue
+  igual. Con esto queda cubierto el hueco que dejé abierto en v2.1.
+
+**`bash init.sh` completo (con PostgreSQL), 1 corrida:** exit 0, 23/23 suites, 451 pruebas en verde y 1
+`todo` (el `RD-T18` de arriba, que espera el retrabajo de SPEC-07). `billeteraClient.test.js` tiene 70/70 en
+verde. Hay avisos, que son esperables porque esas features están reabiertas: SPEC-07 RD-T19..T24, SPEC-08
+CD-T14/T15 y SPEC-11 CM-T09 aún no tienen prueba. Esta vez no apareció el deadlock de `TRUNCATE`.
+
+**Pruebas fallidas:** ninguna.
+
+**Cobertura:** All files 99.61 % stmts / 95.1 % branch / 99.28 % funcs / 99.71 % lines. `core/clients` está
+en 100 % stmts / 95.83 % branch. `billeteraClient.js` tiene 100 % de líneas; las ramas sin cubrir están en
+las l. 83, 114-117 y 238 y son fallbacks defensivos. Todo supera el mínimo del 80 %.
+
+**Pendiente para SPEC-07:** hay un ajuste transitorio en `src/modules/registrar-deposito/service.js:65-67`
+(`RECHAZADO` → `BILLETERA_NO_DISPONIBLE`). Ninguna prueba de `service.test.js` cubre todavía `acreditar` →
+`RECHAZADO`, y eso queda para el retrabajo de SPEC-07 (RD-R08/R13 v2.2), como indica `progress/impl_02.md`.
 
 ## SPEC-03
 
@@ -550,6 +582,56 @@ Tests:       12 todo, 177 passed, 189 total
 - Ramas no cubiertas de `pipeline.js`: los `?? null` defensivos (`correlationId`, `actual?.id`, `deposito?.id`,
   `err?.message`) y el `catch` de `ejecutarPostProcesos` cuando falla el propio `contextoDe` (línea 106).
 
+### Retrabajo v1.2 (2026-11-09)
+
+- **Tester** · 2026-11-09 · Spec v1.1 → v1.2: PIP-R12 (`server.js` llama también a `reconciliacion.iniciar()`)
+  y §4 (`deposito.titularId`; contexto de reconciliación `usuario = { id, roles: [] }`, `cuenta = null`).
+  No añade casos PIP-Tnn. No toqué `src/`, `specs-v2/` ni helpers/setup de `tests/`.
+
+**1. PIP-R12**
+- `tests/core/cargador.test.js`: la prueba `PIP-R12 crearApp no inicia la tarea de limpieza` pasa a llamarse
+  `PIP-R12 crearApp no inicia tareas (ni limpieza de claves ni reconciliación)`. Ahora espía también
+  `reconciliacion.iniciar` (`src/modules/registrar-deposito/reconciliacion.js`) y comprueba que `crearApp` no lo llama. ✅
+- **Sin prueba de `src/server.js`.** No hay ninguna en `tests/`. Las pruebas de `limpiarClaves.iniciar()`
+  (`tests/integration/idempotencia/idempotencia.test.js`) prueban la tarea, no el punto de entrada. `server.js` hace
+  `listen` y lee el manifest al hacer `require`. Para probarlo habría que mockear `app.listen`, `fs` y las dos tareas, y
+  eso no sigue el estilo actual. Por eso no la invento (indicación del líder). Revisé a mano `src/server.js:21-26`:
+  llama a `crearApp` → `limpiarClaves.iniciar()` → `reconciliacion.iniciar()` → `listen`, como pide PIP-R12.
+
+**2. Pruebas de SPEC-06 obsoletas por el §4 nuevo:** ninguna.
+- El pipeline pasa el depósito y el contexto tal cual, así que ninguna prueba de `tests/core/` dependía de la
+  ausencia de `titularId` ni de que `cuenta` no fuera nula.
+- Único ajuste de fidelidad: `nuevoDeposito()` de `tests/core/pipeline.test.js` incluye
+  `titularId: 'usr-cliente-1'` (campo del §4 v1.2, dato de SPEC-02 §4). Ninguna aserción cambia.
+- El contexto con `cuenta = null` en post-procesos ya lo cubren las pruebas de SPEC-07 (`RD-R08`, reintento).
+  Con la reconciliación lo cubrirán RD-T22..T24.
+
+**3. Ajustes mínimos en `tests/unit/registrar-deposito/service.test.js` (SPEC-07, contrato actual)**
+1. `prepararDependencias()` (l. 55): el mock por defecto de `billeteraClient.acreditar` resuelve
+   `{ estado: 'ACREDITADO' }` en vez de `undefined` (SPEC-02 v2.2: `acreditar` siempre resuelve `{ estado }`).
+   Esto arregla 10 pruebas: RD-T03, RD-T11, RD-T12, RD-T13, RD-T18, RD-R03 (sin referencia), RD-R03/R05, RD-R04,
+   RD-R08 (FALLIDO) y RD-R09.
+2. `insertar guarda montos…` (l. 389/393): la entrada lleva `titularId: 'usr-cliente-1'` y se esperan **10**
+   parámetros. El último es `'usr-cliente-1'` (`titular_id`, DOM-R11 / RD-R05).
+3. Título de RD-R08 (l. 313): `…/usuario_id/canal guardados` → `…/titular_id/canal guardados`. La aserción
+   ya comprobaba `titularId`.
+- No escribí RD-T19..T24, no convertí el `test.todo` de RD-T18 ni cambié la billetera de RD-T18. Eso queda para el
+  tester de SPEC-07.
+
+**Ejecución `bash init.sh` completo (PostgreSQL real), 1 corrida, sin deadlock de `TRUNCATE`:**
+- Pruebas: **23 suites passed, 451 passed, 1 todo (RD-T18 body idéntico), 0 fallidas.**
+- Avisos (features reabiertas): SPEC-07 sin RD-T19..T24; SPEC-08 sin CD-T14, CD-T15; SPEC-11 sin CM-T09.
+- **`init.sh` termina en FAIL por cobertura:** `Jest: "./src/modules/" coverage threshold for branches (80%) not met: 75%`.
+  - La causa es el código nuevo de SPEC-07 que todavía no tiene pruebas:
+    `src/modules/registrar-deposito/reconciliacion.js` (28.57 % stmts, 0 % branches, l. 12-37) y
+    `service.js` l. 165-241 (`reconciliar`), además de `repository.js` l. 60-70 (`tomarParaReconciliar`).
+  - `modules/registrar-deposito`: 65.08 % stmts / 58.75 % branches.
+  - No es un fallo de una prueba ni de SPEC-06. No bajo el umbral, y no puedo escribir RD-T22..T24, que son las que
+    lo cubren (fuera de este encargo).
+  - Debería quedar verde cuando el tester de SPEC-07 cubra la reconciliación.
+- Cobertura `src/core/`: 99.46 % stmts / 94.73 % branches. `cargador.js` 100 %; `pipeline.js` 100 % stmts / 82.14 % branches.
+  Total: 92.8 % stmts / 88.86 % branches. Los demás `modules/*` ≥ 98.7 % stmts.
+
 ## SPEC-07
 
 - **Tester** · 2026-11-03 · Feature 7 (`registrar-deposito`) · **retrabajo Billetera USD (spec v2.0)**, rama `inte_biUsd`.
@@ -682,6 +764,103 @@ Tests:       1 todo, 392 passed, 393 total
 
 Umbral 80 % cumplido en `src/core/` y `src/modules/`.
 
+### Retrabajo v2.2 (2026-11-09)
+
+- **Tester** · 2026-11-09 · Spec v2.0 → v2.2 (`acreditar` con resultado `ACREDITADO`/`PENDIENTE`/`RECHAZADO`,
+  RD-R11 en ambas billeteras, 202 de RD-R12, reconciliación de RD-R13, `titular_id` guardado). Código del
+  desarrolladorback: `progress/impl_07.md` › "Retrabajo v2.2". No toqué `src/`, `specs-v2/`, `db/`, `mocks/`,
+  `scripts/` ni helpers/setup de `tests/`. Solo edité los dos archivos del §2:
+  `tests/unit/registrar-deposito/service.test.js` (U) y `tests/integration/registrar-deposito/registrar.test.js` (I).
+- Integración: PostgreSQL real; billeteras con los helpers nock de SPEC-02; extensiones inactivas salvo
+  RD-T14 (`conversion-moneda` activa). La reconciliación se ejecuta con `reconciliacion.reconciliar()` (un ciclo),
+  siempre con `await` antes de que termine la prueba, así ningún `FOR UPDATE SKIP LOCKED` sigue abierto cuando
+  `limpiar()` hace el `TRUNCATE`. Antes de reconciliar un depósito creado por HTTP se espera a la auditoría
+  (`esperarAuditoria`): el INSERT de auditoría (FK a `depositos`) bloquea la fila y `SKIP LOCKED` la saltaría.
+  Las filas viejas se preparan con `actualizado_en = now() - interval` (`insertarUsd` / `envejecer`, en el propio
+  archivo de prueba), más antiguas que `RECONCILIACION_ANTIGUEDAD_MS` (10 s por defecto).
+
+**1. Pruebas obsoletas por v2.2 (revisión de los ajustes del tester de SPEC-06)**
+- Los 3 ajustes mínimos de `service.test.js` son correctos y se quedan: el mock de `acreditar` resuelve
+  `{ estado: 'ACREDITADO' }`, `insertar` recibe 10 parámetros (el último es `titular_id`), y el título de RD-R08
+  dice `titular_id`.
+- RD-T18 (U e I) pasa de `99999999-…`/500 a `cccccccc-cccc-4ccc-8ccc-cccccccccccc`/`usr-falla-una-vez`/503. La
+  2.ª petición la atiende `acreditaUsdOk()` (201): el mock responde "503 la primera vez y luego OK".
+- Se eliminó el helper local `billeteraFallaExiste` (`99999999-…`). También se eliminó el
+  `test.todo('RD-T18 … body idéntico …')`, que ahora es una aserción real.
+- `depositos()` (I) lee también `titular_id`. El `manifest()` acepta `conversion`.
+
+**2. Casos (id → archivo:línea)**
+
+| Caso | Prueba |
+|---|---|
+| RD-T13 201 COMPLETADO; Billetera USD recibió `Idempotency-Key` = id y el body exacto `{ cliente_id: "usr-cliente-1", monto: "150.00", moneda: "USD", canal: "AGENTE", metodo_origen: "EFECTIVO", referencia_externa: id }` (**sin** `cuenta_destino_id`); la fila guarda `titular_id: "usr-cliente-1"` y `usuario_id: "usr-agente-1"` | I:554 · U:545 (`insertar` recibe `titularId` y `usuarioId`) |
+| RD-T14 PEN a `11111111-…`, `conversion-moneda` **inactiva** → 422 `MONEDA_NO_SOPORTADA`, 0 filas, sin acreditación | I:600 · U (bloque RD-T13..T18) |
+| RD-T14 con `conversion-moneda` **activa** y sin tipo PEN→USD → 422, 0 filas, sin acreditación | I:613 |
+| RD-T14 con `conversion-moneda` activa **y tipo PEN→USD cargado** (D1) | **`test.todo`** I:626, ver abajo |
+| RD-T18 503 → 502 FALLIDO (clave `REINTENTABLE`, fila con `titular_id: "usr-falla-una-vez"`); reintento HTTP con la misma clave → 201, mismo id, COMPLETADO, clave `TERMINADO`; sin 2.ª consulta; misma `Idempotency-Key`, mismo `cliente_id` y body `toEqual` al original | I:682 · U:491 |
+| RD-T19 `33333333-…` (BLOCKED) y `44444444-…` (CLOSED) → 422 `CUENTA_INACTIVA`; 0 filas; sin acreditación | I:745 · U:552 |
+| RD-T20 `55555555-…` (`WALLET_BLOCKED`), `66666666-…` (`CUSTOMER_BLOCKED`), `77777777-…` (`USD_ACCOUNT_NOT_ENABLED`) → 422 `CUENTA_INACTIVA`; cada depósito FALLIDO con su `titular_id`; `cliente_id` correcto | I:766 · U:567 (`PROCESANDO→FALLIDO` y `depositoId`) |
+| RD-T21 202 VALIDADO → 202 con el cuerpo de SPEC-01 y `estado: "PROCESANDO"`; fila PROCESANDO; `ejecutarPostProcesos` no llamado; clave `TERMINADO` con `status_http` 202; repetir la clave → 202, `Idempotency-Replayed: true`, mismo cuerpo, billetera no llamada otra vez | I:813 · U:580 |
+| RD-T22 replay `COMPLETADO` → COMPLETADO; post-procesos **una vez** con `contexto.cuenta = null` y `usuario = { id: "usr-agente-1", roles: [] }`; un 2.º ciclo no lo toma (sin acreditación ni post-proceso extra); body y clave idénticos al POST original (`aaaaaaaa-…`/`usr-pendiente`) | I:911 · U:668 (post-procesos después del COMMIT) |
+| RD-T22 replay `FALLIDO` (`RECHAZADO`) → FALLIDO, sin post-procesos, body idéntico (`bbbbbbbb-…`/`usr-pendiente-falla`) | I:938 · U:696 (también `CUENTA_INACTIVA` → FALLIDO) |
+| RD-T22 replay `VALIDADO` → sigue en PROCESANDO, `actualizado_en` intacto, body idéntico; el siguiente ciclo (COMPLETADO) lo cierra | I:954 · U:713 (también `BILLETERA_NO_DISPONIBLE` → sigue) |
+| RD-T23 dos `reconciliar()` simultáneos sobre el mismo depósito → uno toma 1 fila y el otro 0; resúmenes `completados` [0, 1]; 1 acreditación; 1 post-proceso; COMPLETADO. El solape es determinista: la 1.ª retiene la fila bloqueada hasta que la 2.ª termina su `SELECT … FOR UPDATE SKIP LOCKED`. Si faltara `SKIP LOCKED`, la prueba fallaría por el tope de 3 s | I:978 |
+| RD-T24 PEN en PROCESANDO de hace 2 h → no se toma; un USD reciente tampoco; solo el USD antiguo se acredita; billetera PEN no llamada; `actualizado_en` de los no tomados intacto | I:1018 · U:768 (SQL de `tomarParaReconciliar`: filtro UUID, antigüedad, `LIMIT`, `FOR UPDATE SKIP LOCKED`) |
+
+**3. Reglas sin id**
+
+| Regla | Prueba |
+|---|---|
+| RD-R08 `acreditar` → `RECHAZADO` en `registrar` → `PROCESANDO→FALLIDO`, 502 `BILLETERA_NO_DISPONIBLE` con `depositoId` | U:596 |
+| RD-R08 reintento de un USD FALLIDO con replay `FALLIDO` → 502 con `depositoId`, sigue FALLIDO, sin post-procesos, body con `cliente_id` = `titular_id` guardado | I:858 · U:608 |
+| RD-R11 `acreditar` lanza `CUENTA_INACTIVA` → FALLIDO + 422 con `depositoId`; la clave queda `TERMINADO` (422, `deposito_id`) y repetirla devuelve el mismo 422 (`Idempotency-Replayed`) sin consultar ni acreditar | I:786 · U:567 · U:619 (en el reintento) |
+| RD-R12 reintento con `PENDIENTE` → PROCESANDO con las extensiones leídas, sin post-procesos | U:629 |
+| RD-R13 `CUENTA_INACTIVA` (422 `WALLET_BLOCKED`) → FALLIDO; `BILLETERA_NO_DISPONIBLE` (503) → sigue en PROCESANDO; orden `ORDER BY actualizado_en` | I:1046 · U:696/713 |
+| RD-R13 más de `RECONCILIACION_ALERTA_MS` en PROCESANDO → `logger.error` con `depositoId` y `enProcesandoMs`; uno reciente no alerta | I:1064 · U:727 |
+| RD-R13 error que no es `ErrorApp` en `acreditar` → se registra, sigue en PROCESANDO y el lote continúa; un post-proceso que falla se registra y no deshace COMPLETADO; lote vacío → resumen en cero | U:738 · U:751 · U:762 |
+| RD-R13 `reconciliacion.iniciar()`: `setInterval` cada `RECONCILIACION_INTERVALO_MS` con `unref()` (`hasRef() === false`), idempotente, `detener()` lo limpia (`jest.getTimerCount() === 0`); un ciclo que falla → `logger.error` con `error`/`codigoError` y los siguientes siguen; no se solapa consigo mismo; `reconciliacion.reconciliar === service.reconciliar`. Con temporizadores falsos de Jest y `detener()` en `afterEach`: no deja handles abiertos | U:796 · U:815 · U:830 · U:847 |
+
+#### Casos en `test.todo` (Retrabajo v2.2)
+
+- `RD-T14 … con conversion-moneda ACTIVA y tipo PEN→USD cargado → 422 (D1); espera el retrabajo de SPEC-11 (CM-T09)`
+  (I:626). SPEC-11 está `reabierta` y su código actual (`src/modules/conversion-moneda/service.js:13-26`) convierte
+  PEN→USD si hay tipo cargado. Lo confirma la prueba vigente `CM-R03 PEN → USD … Billetera USD recibe "39.00" USD` de
+  `tests/integration/conversion-moneda/conversion.test.js:268`, que también contradice CM-T09/D1 y debe revisar el
+  tester de SPEC-11. La parte de RD-T14 que depende solo de SPEC-07 (inactiva, y activa sin tipo) es prueba real.
+- No hay otros `test.todo` en `tests/` que esperaran SPEC-07.
+
+#### Pruebas fallidas (Retrabajo v2.2)
+
+Ninguna.
+
+#### Ejecución y cobertura (Retrabajo v2.2)
+
+`bash init.sh` completo con PostgreSQL real (`chalenge-db-1`), **2 corridas seguidas, ambas `EXIT=0`, sin deadlock de
+`TRUNCATE`:**
+- `[OK] SPEC-07: todos sus casos tienen prueba` · alcance OK (190 archivos) ·
+  `feature_list.json válido (in_progress=1 reabierta=4)`. No apareció ningún FAIL del chequeo de estado de features.
+- Avisos que no son de SPEC-07: `SPEC-08 (reabierta) aún sin prueba: CD-T14, CD-T15` y
+  `SPEC-11 (reabierta) aún sin prueba: CM-T09`.
+- `Test Suites: 23 passed, 23 total` · `Tests: 1 todo, 484 passed, 485 total` (antes 451 + 1 todo).
+
+```
+File                         | % Stmts | % Branch | % Funcs | % Lines | Uncovered
+All files                    |   99.76 |    94.63 |   99.32 |   99.87 |
+ core                        |   99.46 |    94.73 |   97.14 |   99.42 |
+ modules/registrar-deposito  |     100 |    93.75 |     100 |     100 |
+  controller.js              |     100 |      100 |     100 |     100 |
+  reconciliacion.js          |     100 |       80 |     100 |     100 | 18
+  repository.js              |     100 |       90 |     100 |     100 | 29
+  service.js                 |     100 |    96.29 |     100 |     100 | 170,208
+```
+
+- Agregado (calculado sobre `coverage/coverage-final.json`): `src/core/` 99.79 % stmts / 94.96 % ramas;
+  **`src/modules/` 99.73 % stmts / 93.92 % ramas** (antes 75 % de ramas). Umbral 80 % cumplido; el bloqueo de cobertura
+  que impedía cerrar SPEC-06 queda resuelto.
+- Ramas sin cubrir, todas defensivas: `reconciliacion.js:18` y `service.js:170,208` son el `?? String(err)` /
+  `?.code ?? null` de errores sin `message`; `repository.js:29` es el `titularId ?? null`, ya que toda cuenta de
+  SPEC-02 §4 tiene titular.
+
 ## SPEC-08
 
 - **Tester** · 2026-11-03 · Feature 8 (`consultar-deposito`) · **retrabajo** spec v1.2 (Billetera USD), rama
@@ -780,6 +959,50 @@ Tests:       1 todo, 396 passed, 397 total
 ```
 
 Todo por encima del 80 %.
+
+### Retrabajo v1.3
+
+- **Tester** · 2026-11-09 · spec v1.2 → v1.3 (CD-R08, CD-R09; CD-T14, CD-T15; CD-T13 precisa `usr-cliente-1`).
+  Sin cambios en `src/` (ver `progress/impl_08.md`, "Retrabajo v1.3"). Solo se tocó
+  `tests/integration/consultar-deposito/consultar.test.js`.
+- **Ejecución:** `bash init.sh` completo con PostgreSQL real → **`EXIT=0`**. `[OK] SPEC-08: todos sus casos tienen
+  prueba` · alcance OK (190 archivos) · `Test Suites: 23 passed, 23 total` · `Tests: 1 todo, 489 passed, 490 total`
+  (el `todo` no es de SPEC-08). Único aviso: `SPEC-11 (reabierta) aún sin prueba: CM-T09` (feature reabierta). No
+  apareció el deadlock de `TRUNCATE`.
+
+| Caso | Prueba | Archivo |
+|---|---|---|
+| CD-T13 | Ahora pasa `usuario: 'usr-cliente-1'` explícito (antes ya era ese usuario, por defecto de `get`); nombre actualizado al enunciado v1.3 | `tests/integration/consultar-deposito/consultar.test.js` |
+| CD-T14 | Depósito `PROCESANDO` a `11111111-…` → 200 con `estado: "PROCESANDO"` tanto para el titular `usr-cliente-1` (1 GET a Billetera USD) como para el operador `usr-agente-1`. Interceptores `acreditaUsdOk` y `acreditaUsdReplay` (`POST /api/v1/depositos/usd`) preparados y **no consumidos** (`isDone() === false`, 0 peticiones) con `nock.disableNetConnect()`; trampa PEN sin llamar; la fila de `depositos` no cambia | idem |
+| CD-T15 | Titular `usr-bloqueada` de `33333333-…` (`BLOCKED`) consulta su depósito → 200 con cuerpo completo; 1 GET USD; `contexto.cuenta.estado = 'BLOQUEADA'` | idem |
+| CD-R09 (CLOSED) | Misma prueba (`test.each`) con `usr-cerrada` / `44444444-…` (`CLOSED`) → 200; `contexto.cuenta.estado = 'CERRADA'` | idem |
+| CD-T15 control | `usr-cliente-1` (no titular) sobre el depósito a `33333333-…` → 404 `DEPOSITO_NO_ENCONTRADO` (el 200 sale de la titularidad y no de otro camino) | idem |
+| CD-R09 (PEN) | `usr-cliente-1`, titular de la cuenta PEN `BLOQUEADA` `0011-0123-000003` → 200 | idem |
+
+- **Token de `usr-bloqueada` / `usr-cerrada`:** `tests/helpers/tokens.js` solo conoce los 5 usuarios de la lista
+  "Usuarios" de SPEC-02 §4, y no lo puedo editar. Estos titulares sí son datos de §4 (billeteras USD), así que el
+  token se firma en la propia prueba con la misma clave de `tests/.tmp/privada.pem` (precedente SEG-R06 en
+  `tests/integration/seguridad/seguridad.test.js`) y con rol `CLIENTE`. Es el único rol que verifica titular
+  (CD-R03), y §4 no les asigna otro rol.
+- **Pruebas obsoletas:** ninguna. Ninguna prueba de SPEC-08 esperaba un rechazo por estado de billetera ni una
+  llamada a billetera para actualizar el estado. Coincide con lo que dice el dev en `progress/impl_08.md`.
+- **Casos en `test.todo`:** ninguno de SPEC-08.
+- **Pruebas fallidas:** ninguna.
+
+Cobertura (`init.sh` completo):
+
+```
+All files                    |   99.76 |    94.63 |   99.32 |   99.87 |
+ core                        |   99.46 |    94.73 |   97.14 |   99.42 |
+ core/clients                |     100 |    95.83 |     100 |     100 |
+ core/middlewares            |     100 |    94.87 |     100 |     100 |
+ core/repositories           |     100 |     87.5 |     100 |     100 |
+ core/tareas                 |     100 |      100 |     100 |     100 |
+ modules/consultar-deposito  |     100 |      100 |     100 |     100 |
+ modules/registrar-deposito  |     100 |    93.75 |     100 |     100 |
+```
+
+Todo está por encima del 80 %.
 
 ## SPEC-09
 
@@ -1033,6 +1256,61 @@ All files                    |   99.72 |     95.1 |   99.23 |   99.84 |
 
 Umbral 80 % cumplido en `src/core/` y `src/modules/`.
 
+### Retrabajo v1.2
+
+- **Tester** · 2026-11-09 · Feature 11 (`conversion-moneda`) · retrabajo por spec v1.1 → v1.2
+  (D1: no hay conversión hacia cuentas USD; CM-R11; CM-T09; el seed ya no trae PEN→USD).
+  No toqué `src/`, `db/`, `mocks/`, `scripts/` ni los helpers/setup de `tests/`.
+- **Ejecución:** `bash init.sh` completo con PostgreSQL real → `Test Suites: 23 passed, 23 total` ·
+  `Tests: 492 passed, 492 total` (0 todo) · `[OK] Todas las pruebas en verde (unitarias + integración)`.
+  `bash init.sh --rapido` → 263/263, sin WARN (ya no sale `SPEC-11 aún sin prueba: CM-T09`).
+  No hubo deadlock de `TRUNCATE`: verde a la primera.
+
+#### Pruebas obsoletas por v1.2 (eliminadas o reescritas)
+
+| Prueba anterior | Archivo | Qué se hizo |
+|---|---|---|
+| `CM-R05 PEN → USD con 0.26 a la billetera 11111111-…: 150.00 PEN → 39.00 USD` | `tests/unit/conversion-moneda/conversion.test.js` | Eliminada. En su lugar van `CM-R11 PEN a la billetera USD…` (U:110), `CM-R11 persistir tras el corte…` (U:126) y `CM-R01 USD a la billetera USD…` (U:138) |
+| `CM-R03 PEN → USD a la billetera 11111111-… usa la fila PEN→USD (0.26)…; Billetera USD recibe "39.00" USD` | `tests/integration/conversion-moneda/conversion.test.js` | Eliminada (v1.2 ya no convierte en ese sentido; CM-T09 cubre el caso). Se quitó también la constante `EXTENSION_39` |
+| `CM-R09 PEN → USD y Billetera USD responde 500 → FALLIDO…` | idem | Reescrita (I:310) con USD → PEN a `0011-0123-456789` y 500: 502, FALLIDO `375.00` PEN, la fila de conversión se queda y `GET /depositos/{id}` del FALLIDO trae la extensión |
+| `CM-R03 solo hay fila USD→PEN y el depósito es PEN a la billetera USD → 422 (no invierte)` | idem | Ahora se llama `CM-R11 …` (I:295); las aserciones no cambian |
+| `CM-R03 solo hay fila PEN→USD y el depósito es USD a cuenta PEN → 422 (no invierte)` | idem | Sigue igual y además comprueba que `buscarVigente` se llama una vez con `('USD','PEN')`. Sirve de control de que el espía de CM-T09 funciona |
+| `CM-T07 (PEN → USD) feature inactivo…` | idem | Sin cambios (sigue dando 422 en v1.2) |
+
+#### Casos cubiertos (nuevos o convertidos)
+
+| Caso | Archivo | Qué comprueba |
+|---|---|---|
+| CM-T09 | `tests/integration/conversion-moneda/conversion.test.js:262` | Feature activa y tipo PEN→USD 0.2600 cargado; `100.00` PEN a `11111111-…` → 422 `MONEDA_NO_SOPORTADA` con `correlationId`; Billetera USD consultada 1 vez; 0 créditos USD y 0 créditos PEN; `depositos` y `conversiones_deposito` vacías; `repository.buscarVigente` **no** se llama (CM-R11; `jest.spyOn` sin mock, la BD es real) |
+| CM-R11 (unit) | `tests/unit/conversion-moneda/conversion.test.js:110` | `ejecutar` con cuenta USD y depósito PEN → devuelve el mismo objeto, no lanza, `db.query` no se llama aunque haya fila PEN→USD, `contexto.privado` vacío, sin extensión |
+| RD-T14 (activa y con tipo PEN→USD) | `tests/integration/registrar-deposito/registrar.test.js:626` | Era el `test.todo` de SPEC-07 que esperaba esta feature. Ahora es prueba real: `conversion-moneda` activa, fila PEN→USD cargada, `100.00` PEN a `11111111-…` → 422 `MONEDA_NO_SOPORTADA`; 1 consulta a Billetera USD; 0 créditos; 0 depósitos; 0 conversiones (RD-T14 v2.2, D1) |
+
+El resto (CM-T01..T08, CM-R01..R08, CM-R10) no cambió y sigue en verde.
+
+#### Otras pruebas revisadas (uso de PEN→USD)
+
+- `tests/integration/consultar-deposito/consultar.test.js` (CD-T07/CD-T08): usan USD→PEN 3.7500 a
+  `0011-0123-456789`. Siguen bien con v1.2, sin cambios.
+- `tests/integration/alerta-uif/*`, `tests/unit/alerta-uif/alerta.test.js` (SPEC-12): `conversion-moneda`
+  inactiva y sin tipos de cambio. Sin cambios.
+- `tests/unit/registrar-deposito/service.test.js` (RD-T14 unitario, sin conversión): sin cambios.
+- Otras coincidencias de `PEN`/`USD` (`historial`, `permisos`, `proyecto`): no tienen que ver con la
+  conversión. Sin cambios.
+
+#### Casos en `test.todo`
+
+Ninguno. En `tests/` ya no queda ningún `test.todo`.
+
+#### Pruebas fallidas
+
+Ninguna.
+
+#### Cobertura (`src/core/` y `src/modules/`)
+
+All files 99.76 % stmts / 94.66 % branch / 99.32 % funcs / 99.87 % lines. `core` 99.46/94.73/97.14/99.42;
+`modules/conversion-moneda` 100/100/100/100; `modules/registrar-deposito` 100/93.75/100/100. Todo
+supera el umbral del 80 %.
+
 ## SPEC-12
 
 - **Tester** · 2026-11-03 · Feature 12 (`alerta-uif`) · **retrabajo** por SPEC-02 §4 v2.0 (spec 12
@@ -1115,3 +1393,55 @@ All files                    |   99.72 |     95.1 |   99.23 |   99.84 |
 ```
 
 Todo por encima del 80 %.
+
+### Retrabajo v1.3
+
+- **Tester** · 2026-11-09 · Feature 12 (`alerta-uif`) · spec 1.2 → 1.3: solo cambia UIF-R01
+  («también tras un reintento exitoso **o una reconciliación (RD-R13), una sola vez por
+  depósito**»). Sin casos UIF-Tnn nuevos; sin desarrollador (no se tocó `src/`).
+- **Ejecución:** `bash init.sh` completo con PostgreSQL real (`deposito_test`) → exit 0,
+  `Test Suites: 23 passed, 23 total` · `Tests: 494 passed, 494 total` (0 todo) ·
+  `[OK] SPEC-12: todos sus casos tienen prueba` · `[OK] Todas las pruebas en verde` ·
+  `[OK] Entorno listo`. No apareció el deadlock de `TRUNCATE` (una sola pasada).
+- **Pruebas nuevas** (`tests/integration/alerta-uif/alerta.test.js`, bloque «SPEC-12 v1.3
+  alerta-uif: reconciliación (UIF-R01, RD-R13)»). Usan `reconciliar()` de
+  `src/modules/registrar-deposito/reconciliacion.js`, igual que RD-T22..T24; POST `5000.00` USD
+  VENTANILLA (`usr-cajero-1`, sobre `UIF_UMBRAL_USD = 300.00`, bajo el límite de 15000.00), con
+  `acreditaUsdPendiente()` (202 VALIDADO) → depósito PROCESANDO y 0 alertas; luego se envejece
+  `actualizado_en` 1 minuto (más que `RECONCILIACION_ANTIGUEDAD_MS`).
+  - **UIF-R01 reconciliación COMPLETADO** (`aaaaaaaa-…` / `usr-pendiente`, replay
+    `estado: 'COMPLETADO'`): `reconciliar()` → `{ completados: 1, fallidos: 0, pendientes: 0 }`;
+    depósito COMPLETADO; **exactamente 1** fila en `alertas_uif` `{ deposito_id, 5000.00, USD,
+    umbral 300.00, PENDIENTE }`. Una 2.ª `reconciliar()` → `{ 0, 0, 0 }`, 0 peticiones a
+    Billetera USD, las mismas filas. Un replay del POST original (misma `Idempotency-Key`) →
+    mismo `id`, 0 peticiones a Billetera USD, las mismas filas (sigue habiendo 1 alerta).
+  - **UIF-R01 reconciliación FALLIDO (RECHAZADO)** (`bbbbbbbb-…` / `usr-pendiente-falla`,
+    replay `estado: 'FALLIDO'`): `reconciliar()` → `{ 0, 1, 0 }`; depósito FALLIDO; 0 alertas.
+- **Pruebas obsoletas de SPEC-12:** ninguna. Las pruebas existentes (UIF-T01..T07, UIF-R01
+  reintento, UIF-R02, R03 PEN/USD, R05, R06, R07) siguen siendo válidas con v1.3: el cambio solo
+  añade un camino (reconciliación) y no altera los demás.
+- **Casos en `test.todo`:** ninguno.
+- **Pruebas fallidas:** ninguna.
+
+#### Cobertura (`src/core/` y `src/modules/`)
+
+```
+-----------------------------|---------|----------|---------|---------
+File                         | % Stmts | % Branch | % Funcs | % Lines
+-----------------------------|---------|----------|---------|---------
+All files                    |   99.76 |    94.66 |   99.32 |   99.87
+ core                        |   99.46 |    94.73 |   97.14 |   99.42
+ core/clients                |     100 |    95.83 |     100 |     100
+ core/middlewares            |     100 |    94.87 |     100 |     100
+ core/repositories           |     100 |     87.5 |     100 |     100
+ core/tareas                 |     100 |      100 |     100 |     100
+ modules/alerta-uif          |     100 |       80 |     100 |     100
+ modules/consultar-deposito  |     100 |      100 |     100 |     100
+ modules/conversion-moneda   |     100 |      100 |     100 |     100
+ modules/historial-depositos |    98.7 |     91.3 |     100 |     100
+ modules/limites-por-canal   |     100 |      100 |     100 |     100
+ modules/registrar-deposito  |     100 |    93.75 |     100 |     100
+-----------------------------|---------|----------|---------|---------
+```
+
+Todo en el 80 % o por encima.

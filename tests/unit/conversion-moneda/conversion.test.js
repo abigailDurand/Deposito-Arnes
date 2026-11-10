@@ -107,23 +107,42 @@ describe('SPEC-11 conversion-moneda: reglas', () => {
       expect(ctx.privado.tipoCambioId).toBe(TIPO_USD_PEN.id);
     });
 
-  test('CM-R05 PEN → USD con 0.26 a la billetera 11111111-…: 150.00 PEN → 39.00 USD', async () => {
-    const ctx = contexto(
-      dbFalso([{ id: '00000000-0000-0000-0000-000000000002', valor: '0.2600' }]),
-      'USD',
-    );
+  test('CM-R11 PEN a la billetera USD 11111111-… → el mismo depósito, sin lanzar y sin consultar '
+    + 'tipos_cambio aunque haya fila PEN→USD', async () => {
+    const db = dbFalso([{ id: '00000000-0000-0000-0000-000000000002', valor: '0.2600' }]);
+    const ctx = contexto(db, 'USD');
+    const original = deposito('100.00', 'PEN', { cuentaDestino: WALLET_USD });
 
+    const resultado = await modulo.ejecutar(original, ctx);
+
+    expect(resultado).toBe(original);
+    expect(resultado.monedaAcreditar).toBe('PEN');
+    expect(resultado.montoAcreditar.toFixed(2)).toBe('100.00');
+    expect(resultado.extensiones).toEqual({});
+    expect(db.query).not.toHaveBeenCalled();
+    expect(ctx.privado).toEqual({});
+  });
+
+  test('CM-R11 persistir tras el corte de CM-R11 → no inserta nada', async () => {
+    const ctx = contexto(dbFalso([{ id: '00000000-0000-0000-0000-000000000002', valor: '0.2600' }]), 'USD');
     const resultado = await modulo.ejecutar(
-      deposito('150.00', 'PEN', { cuentaDestino: WALLET_USD }),
-      ctx,
+      deposito('100.00', 'PEN', { cuentaDestino: WALLET_USD }), ctx,
     );
+    const tx = { query: jest.fn() };
 
-    expect(ctx.db.query.mock.calls[0][1]).toEqual(['PEN', 'USD']);
-    expect(resultado.cuentaDestino).toBe(WALLET_USD);
-    expect(resultado.montoAcreditar.toFixed(2)).toBe('39.00');
-    expect(resultado.monedaAcreditar).toBe('USD');
-    expect(resultado.extensiones['conversion-moneda'])
-      .toEqual({ monedaCuenta: 'USD', tipoCambio: '0.2600', montoAcreditado: '39.00' });
+    await modulo.persistir(resultado, tx, ctx);
+
+    expect(tx.query).not.toHaveBeenCalled();
+  });
+
+  test('CM-R01 USD a la billetera USD → el mismo depósito, sin consultar la BD', async () => {
+    const db = dbFalso([TIPO_USD_PEN]);
+    const original = deposito('100.00', 'USD', { cuentaDestino: WALLET_USD });
+
+    const resultado = await modulo.ejecutar(original, contexto(db, 'USD'));
+
+    expect(resultado).toBe(original);
+    expect(db.query).not.toHaveBeenCalled();
   });
 
   test('CM-R06 sin tipo de cambio → el mismo depósito, sin lanzar y sin tipoCambioId', async () => {

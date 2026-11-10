@@ -86,15 +86,91 @@ describe('SPEC-00 §5 · variables de entorno de config.js', () => {
     expect(c.databaseUrl).toBe('postgres://deposito:deposito@localhost:5432/deposito_test');
   });
 
-  test('BILLETERA_USD_TOKEN opcional: ausente o vacío → token null; presente → su valor (INT-R02)', () => {
+  test('BILLETERA_USD_TOKEN_URL ausente o vacía → tokenUrl/clientId/clientSecret null (transición Q7)', () => {
     expect(cargarConfig(envBase()).billeteraUsd).toEqual({
       url: 'http://billetera-usd.test',
-      token: null,
+      tokenUrl: null,
+      clientId: null,
+      clientSecret: null,
     });
-    expect(cargarConfig({ ...envBase(), BILLETERA_USD_TOKEN: '   ' }).billeteraUsd.token).toBeNull();
-    const c = cargarConfig({ ...envBase(), BILLETERA_USD_TOKEN: 'token-usd' });
-    expect(c.billeteraUsd).toEqual({ url: 'http://billetera-usd.test', token: 'token-usd' });
+    expect(cargarConfig({ ...envBase(), BILLETERA_USD_TOKEN_URL: '   ' }).billeteraUsd.tokenUrl).toBeNull();
+    // Sin TOKEN_URL, las credenciales sueltas no se exigen ni se usan.
+    const c = cargarConfig({ ...envBase(), BILLETERA_USD_CLIENT_ID: 'id', BILLETERA_USD_CLIENT_SECRET: 's' });
+    expect(c.billeteraUsd).toEqual({
+      url: 'http://billetera-usd.test',
+      tokenUrl: null,
+      clientId: null,
+      clientSecret: null,
+    });
   });
+
+  test('BILLETERA_USD_TOKEN_URL sin CLIENT_ID ni CLIENT_SECRET → error de arranque con ambos nombres', () => {
+    const env = { ...envBase(), BILLETERA_USD_TOKEN_URL: 'http://auth-usd.test/oauth/token' };
+    expect(() => cargarConfig(env)).toThrow(
+      'Faltan variables de entorno obligatorias: BILLETERA_USD_CLIENT_ID, BILLETERA_USD_CLIENT_SECRET',
+    );
+  });
+
+  test.each(['BILLETERA_USD_CLIENT_ID', 'BILLETERA_USD_CLIENT_SECRET'])(
+    'BILLETERA_USD_TOKEN_URL presente y %s ausente o vacía → error de arranque con su nombre',
+    (nombre) => {
+      const env = {
+        ...envBase(),
+        BILLETERA_USD_TOKEN_URL: 'http://auth-usd.test/oauth/token',
+        BILLETERA_USD_CLIENT_ID: 'cliente-deposito',
+        BILLETERA_USD_CLIENT_SECRET: 'secreto-de-prueba',
+      };
+      delete env[nombre];
+      expect(() => cargarConfig(env)).toThrow(new RegExp(`obligatorias: ${nombre}$`));
+      expect(() => cargarConfig({ ...env, [nombre]: '  ' })).toThrow(new RegExp(`obligatorias: ${nombre}$`));
+    },
+  );
+
+  test('BILLETERA_USD_TOKEN_URL con CLIENT_ID y CLIENT_SECRET → sus valores', () => {
+    const c = cargarConfig({
+      ...envBase(),
+      BILLETERA_USD_TOKEN_URL: 'http://auth-usd.test/oauth/token',
+      BILLETERA_USD_CLIENT_ID: 'cliente-deposito',
+      BILLETERA_USD_CLIENT_SECRET: 'secreto-de-prueba',
+    });
+    expect(c.billeteraUsd).toEqual({
+      url: 'http://billetera-usd.test',
+      tokenUrl: 'http://auth-usd.test/oauth/token',
+      clientId: 'cliente-deposito',
+      clientSecret: 'secreto-de-prueba',
+    });
+  });
+
+  test('BILLETERA_USD_TOKEN ya no se lee (sustituida por INT-R13)', () => {
+    const c = cargarConfig({ ...envBase(), BILLETERA_USD_TOKEN: 'token-usd' });
+    expect(c.billeteraUsd).not.toHaveProperty('token');
+    expect(JSON.stringify(c)).not.toContain('token-usd');
+  });
+
+  test('RECONCILIACION_* ausentes → defaults 30000 / 10000 / 3600000 (RD-R13)', () => {
+    expect(cargarConfig(envBase()).reconciliacion).toEqual({
+      intervaloMs: 30000,
+      antiguedadMs: 10000,
+      alertaMs: 3600000,
+    });
+  });
+
+  test('RECONCILIACION_* explícitas → enteros', () => {
+    const c = cargarConfig({
+      ...envBase(),
+      RECONCILIACION_INTERVALO_MS: '1000',
+      RECONCILIACION_ANTIGUEDAD_MS: '2000',
+      RECONCILIACION_ALERTA_MS: '60000',
+    });
+    expect(c.reconciliacion).toEqual({ intervaloMs: 1000, antiguedadMs: 2000, alertaMs: 60000 });
+  });
+
+  test.each(['RECONCILIACION_INTERVALO_MS', 'RECONCILIACION_ANTIGUEDAD_MS', 'RECONCILIACION_ALERTA_MS'])(
+    '%s no entera → error de arranque con su nombre',
+    (nombre) => {
+      expect(() => cargarConfig({ ...envBase(), [nombre]: '1h' })).toThrow(new RegExp(nombre));
+    },
+  );
 
   test('UIF_UMBRAL_* opcionales: ausentes → null; presentes → string (PRY-R06, nunca Number)', () => {
     expect(cargarConfig(envBase()).uif).toEqual({ umbralPEN: null, umbralUSD: null });

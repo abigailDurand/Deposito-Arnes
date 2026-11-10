@@ -1,4 +1,5 @@
 -- SPEC-01 · Tabla del core. DOM-R03: cuenta_destino y usuario_id no son FK (son de otros servicios).
+-- DOM-R11: titular_id (nullable, no FK) es del core: reintento y reconciliación reenvían el mismo body.
 -- DOM-R04: sin columnas de features; cada feature crea su tabla con FK a depositos(id).
 CREATE TABLE depositos (
     id                UUID PRIMARY KEY,
@@ -11,6 +12,7 @@ CREATE TABLE depositos (
     referencia        VARCHAR(140),
     estado            VARCHAR(20)   NOT NULL CHECK (estado IN ('PENDIENTE','PROCESANDO','COMPLETADO','FALLIDO')),
     usuario_id        VARCHAR(50)   NOT NULL,
+    titular_id        VARCHAR(100),
     creado_en         TIMESTAMPTZ   NOT NULL DEFAULT now(),
     actualizado_en    TIMESTAMPTZ   NOT NULL DEFAULT now()
 );

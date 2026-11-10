@@ -11,8 +11,11 @@ async function ejecutar(deposito, contexto) {
   const monedaCuenta = contexto.cuenta.moneda;
   // CM-R01
   if (deposito.moneda === monedaCuenta) return deposito;
+  // CM-R11 (D1): hacia cuentas en dólares no hay conversión; no se consulta tipos_cambio.
+  // El service de SPEC-07 responde 422 MONEDA_NO_SOPORTADA.
+  if (monedaCuenta === 'USD') return deposito;
 
-  // CM-R02 / CM-R03: una fila por sentido (origen = moneda del depósito).
+  // CM-R02 / CM-R03: una fila por sentido (origen = moneda del depósito; solo USD→PEN tras CM-R11).
   const tipoCambio = await repository.buscarVigente(contexto.db, deposito.moneda, monedaCuenta);
   // CM-R06: sin tipo de cambio no lanza; el service de SPEC-07 responde MONEDA_NO_SOPORTADA.
   if (tipoCambio === null) return deposito;

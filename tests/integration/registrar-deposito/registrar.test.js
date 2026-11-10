@@ -7,7 +7,9 @@ const { crearApp } = require('../../../src/app');
 const config = require('../../../src/config');
 const billeteraClient = require('../../../src/core/clients/billeteraClient');
 const { pool: poolApp } = require('../../../src/core/db');
+const { logger } = require('../../../src/core/logger');
 const pipeline = require('../../../src/core/pipeline');
+const reconciliacion = require('../../../src/modules/registrar-deposito/reconciliacion');
 const repository = require('../../../src/modules/registrar-deposito/repository');
 const service = require('../../../src/modules/registrar-deposito/service');
 const billetera = require('../../helpers/billetera');
@@ -25,14 +27,14 @@ const BODY = { cuentaDestino: CUENTA, monto: '150.00', moneda: 'PEN', canal: 'AG
 const AGENTE_1 = { id: 'usr-agente-1', roles: ['AGENTE'] };
 
 // SPEC-07 §6: todas las extensiones inactivas salvo que el caso diga otra cosa.
-function manifest({ registrar = 'activo' } = {}) {
+function manifest({ registrar = 'activo', conversion = 'inactivo' } = {}) {
   return {
     version: 1,
     servicio: 'deposito-service',
     features: [
       { id: 'registrar-deposito', estado: registrar, tipo: 'endpoint' },
       { id: 'limites-por-canal', estado: 'inactivo', tipo: 'validador', orden: 10 },
-      { id: 'conversion-moneda', estado: 'inactivo', tipo: 'transformador', orden: 10 },
+      { id: 'conversion-moneda', estado: conversion, tipo: 'transformador', orden: 10 },
       { id: 'alerta-uif', estado: 'inactivo', tipo: 'post-proceso', orden: 10 },
     ],
   };
@@ -48,7 +50,7 @@ function post(app, { usuario = 'usr-agente-1', body = BODY, clave = 'rd-clave-00
 async function depositos() {
   const { rows } = await pool.query(
     `SELECT id, cuenta_destino, monto::text AS monto, moneda, monto_acreditar::text AS monto_acreditar,
-            moneda_acreditar, canal, referencia, estado, usuario_id, creado_en, actualizado_en
+            moneda_acreditar, canal, referencia, estado, usuario_id, titular_id, creado_en, actualizado_en
        FROM depositos ORDER BY creado_en`,
   );
   return rows;
@@ -67,6 +69,25 @@ async function insertarDeposito(id, estado, { monto = '150.00', montoAcreditar =
                             canal, estado, usuario_id)
      VALUES ($1, $2, $3, 'PEN', $4, 'PEN', 'AGENTE', $5, 'usr-agente-1')`,
     [id, CUENTA, monto, montoAcreditar, estado],
+  );
+}
+
+// Depósito a una billetera USD insertado directamente (RD-R13). `hace` (interval de PostgreSQL)
+// lleva actualizado_en al pasado, más allá de RECONCILIACION_ANTIGUEDAD_MS; sin `hace`, now().
+async function insertarUsd(id, estado, { cuenta, titular, hace = null }) {
+  await pool.query(
+    `INSERT INTO depositos (id, cuenta_destino, monto, moneda, monto_acreditar, moneda_acreditar,
+                            canal, estado, usuario_id, titular_id, creado_en, actualizado_en)
+     VALUES ($1, $2, '150.00', 'USD', '150.00', 'USD', 'AGENTE', $3, 'usr-agente-1', $4,
+             now() - COALESCE($5::interval, '0'::interval), now() - COALESCE($5::interval, '0'::interval))`,
+    [id, cuenta, estado, titular, hace],
+  );
+}
+
+async function envejecer(id, hace) {
+  await pool.query(
+    'UPDATE depositos SET actualizado_en = now() - $2::interval WHERE id = $1',
+    [id, hace],
   );
 }
 
@@ -525,26 +546,12 @@ describe('SPEC-07 registrar-deposito: reglas', () => {
 });
 
 describe('SPEC-07 registrar-deposito: Billetera USD (RD-T13..RD-T18)', () => {
-  // SPEC-02 §4: 11111111-… (usr-cliente-1), 99999999-… (responde 500 al acreditar; sin titular).
+  // SPEC-02 §4: 11111111-… (usr-cliente-1), cccccccc-… (usr-falla-una-vez: 503 y luego OK).
   const WALLET = '11111111-1111-4111-8111-111111111111';
-  const WALLET_FALLA = '99999999-9999-4999-8999-999999999999';
+  const WALLET_FALLA_UNA_VEZ = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
   const BODY_USD = { cuentaDestino: WALLET, monto: '150.00', moneda: 'USD', canal: 'AGENTE' };
 
-  // El helper billeteraUsdExiste solo conoce 11111111-… y 22222222-…: la consulta de 99999999-…
-  // se intercepta aquí con los datos del mock de SPEC-02 §4 (USD, sin titular).
-  function billeteraFallaExiste() {
-    const peticiones = [];
-    const scope = nock(config.billeteraUsd.url)
-      .get(`/api/v1/billetera/wallets/${WALLET_FALLA}`)
-      .reply(function responder() {
-        peticiones.push({ headers: { ...this.req.headers } });
-        return [200, { id: WALLET_FALLA, user_id: null, nombre: null, balance: '0.00', moneda: 'USD' }];
-      });
-    scope.peticiones = peticiones;
-    return scope;
-  }
-
-  test('RD-T13 usr-agente-1 "150.00" USD AGENTE a 11111111-… → 201 COMPLETADO; Billetera USD recibió Idempotency-Key = id, cliente_id, metodo_origen EFECTIVO y monto "150.00"', async () => {
+  test('RD-T13 usr-agente-1 "150.00" USD AGENTE a 11111111-… → 201 COMPLETADO; Billetera USD recibió Idempotency-Key = id, cliente_id usr-cliente-1, canal, metodo_origen EFECTIVO, monto "150.00" y sin cuenta_destino_id; la fila guarda titular_id y usuario_id', async () => {
     const app = crearApp({ manifest: manifest() });
     const consulta = billetera.billeteraUsdExiste(WALLET);
     const credito = billetera.acreditaUsdOk();
@@ -570,25 +577,27 @@ describe('SPEC-07 registrar-deposito: Billetera USD (RD-T13..RD-T18)', () => {
     expect(filas[0]).toMatchObject({
       id: res.body.id, cuenta_destino: WALLET, monto: '150.00', moneda: 'USD',
       monto_acreditar: '150.00', moneda_acreditar: 'USD', canal: 'AGENTE',
-      estado: 'COMPLETADO', usuario_id: 'usr-agente-1',
+      estado: 'COMPLETADO', usuario_id: 'usr-agente-1', titular_id: 'usr-cliente-1',
     });
 
     expect(consulta.peticiones).toHaveLength(1);
     expect(credito.peticiones).toHaveLength(1);
     expect(credito.peticiones[0].headers['idempotency-key']).toBe(res.body.id);
     expect(credito.peticiones[0].headers['x-correlation-id']).toBe('rd-t13');
+    // SPEC-02 v2.1 INT-R07: cliente_id = titular de la billetera, con canal y sin cuenta_destino_id.
     expect(credito.peticiones[0].body).toEqual({
-      cliente_id: 'usr-agente-1',
-      cuenta_destino_id: WALLET,
+      cliente_id: 'usr-cliente-1',
       monto: '150.00',
       moneda: 'USD',
+      canal: 'AGENTE',
       metodo_origen: 'EFECTIVO',
       referencia_externa: res.body.id,
     });
+    expect(credito.peticiones[0].body).not.toHaveProperty('cuenta_destino_id');
     expect(creditoPen.peticiones).toHaveLength(0);
   });
 
-  test('RD-T14 "100.00" PEN a 11111111-… (USD) con conversion-moneda inactiva → 422 MONEDA_NO_SOPORTADA; 0 filas; sin acreditación', async () => {
+  test('RD-T14 "100.00" PEN a 11111111-… (USD) con conversion-moneda INACTIVA → 422 MONEDA_NO_SOPORTADA; 0 filas; sin acreditación', async () => {
     const app = crearApp({ manifest: manifest() });
     const consulta = billetera.billeteraUsdExiste(WALLET);
     const credito = billetera.acreditaUsdOk();
@@ -599,6 +608,38 @@ describe('SPEC-07 registrar-deposito: Billetera USD (RD-T13..RD-T18)', () => {
     expect(consulta.peticiones).toHaveLength(1);
     expect(credito.peticiones).toHaveLength(0);
     expect(await depositos()).toHaveLength(0);
+  });
+
+  test('RD-T14 "100.00" PEN a 11111111-… (USD) con conversion-moneda ACTIVA y sin tipo PEN→USD → 422 MONEDA_NO_SOPORTADA; 0 filas; sin acreditación', async () => {
+    const app = crearApp({ manifest: manifest({ conversion: 'activo' }) });
+    const consulta = billetera.billeteraUsdExiste(WALLET);
+    const credito = billetera.acreditaUsdOk();
+
+    const res = await post(app, { body: { ...BODY_USD, monto: '100.00', moneda: 'PEN' } });
+
+    esError(res, 422, 'MONEDA_NO_SOPORTADA');
+    expect(consulta.peticiones).toHaveLength(1);
+    expect(credito.peticiones).toHaveLength(0);
+    expect(await depositos()).toHaveLength(0);
+  });
+
+  test('RD-T14 "100.00" PEN a 11111111-… (USD) con conversion-moneda ACTIVA y tipo PEN→USD cargado → 422 MONEDA_NO_SOPORTADA (D1); 0 filas; sin acreditación', async () => {
+    const app = crearApp({ manifest: manifest({ conversion: 'activo' }) });
+    await pool.query(
+      `INSERT INTO tipos_cambio (id, moneda_origen, moneda_destino, valor, vigente_desde)
+       VALUES ('00000000-0000-0000-0000-000000000002', 'PEN', 'USD', 0.2600, now() - interval '1 day')`,
+    );
+    const consulta = billetera.billeteraUsdExiste(WALLET);
+    const credito = billetera.acreditaUsdOk();
+
+    const res = await post(app, { body: { ...BODY_USD, monto: '100.00', moneda: 'PEN' } });
+
+    esError(res, 422, 'MONEDA_NO_SOPORTADA');
+    expect(consulta.peticiones).toHaveLength(1);
+    expect(credito.peticiones).toHaveLength(0);
+    expect(await depositos()).toHaveLength(0);
+    const { rows } = await pool.query('SELECT count(*)::int AS n FROM conversiones_deposito');
+    expect(rows[0].n).toBe(0);
   });
 
   test('RD-T15 cuentaDestino UUID incompleto o en mayúsculas → 400 FORMATO_INVALIDO; billetera no llamada', async () => {
@@ -654,28 +695,31 @@ describe('SPEC-07 registrar-deposito: Billetera USD (RD-T13..RD-T18)', () => {
     ]);
   });
 
-  test('RD-T18 Billetera USD 500 al acreditar (99999999-…) → 502 FALLIDO; reintento con la misma Idempotency-Key y billetera OK → mismo id, COMPLETADO; misma clave y body idéntico a billetera', async () => {
+  // SPEC-07 v2.2: cccccccc-… / usr-falla-una-vez (SPEC-02 §4): 503 la primera vez y luego OK.
+  test('RD-T18 Billetera USD 503 al acreditar (cccccccc-…) → 502 FALLIDO; reintento con la misma Idempotency-Key → mismo id, COMPLETADO; la 2.ª petición lleva la misma clave, el mismo cliente_id y un body idéntico', async () => {
     const app = crearApp({ manifest: manifest() });
-    const consulta = billeteraFallaExiste();
-    const fallo = billetera.acreditaUsdFalla({ status: 500 });
-    const body = { ...BODY_USD, cuentaDestino: WALLET_FALLA };
+    const consulta = billetera.billeteraUsdExiste(WALLET_FALLA_UNA_VEZ);
+    const fallo = billetera.acreditaUsdFalla({ status: 503 });
+    const body = { ...BODY_USD, cuentaDestino: WALLET_FALLA_UNA_VEZ };
 
     const primero = await post(app, { body, clave: 'rd-t18-clave', correlation: 'rd-t18-a' });
 
     esError(primero, 502, 'BILLETERA_NO_DISPONIBLE');
     const [fallido] = await depositos();
-    expect(fallido).toMatchObject({ estado: 'FALLIDO', cuenta_destino: WALLET_FALLA });
+    expect(fallido).toMatchObject({
+      estado: 'FALLIDO', cuenta_destino: WALLET_FALLA_UNA_VEZ, titular_id: 'usr-falla-una-vez',
+    });
     expect(await claves()).toEqual([
       expect.objectContaining({ estado: 'REINTENTABLE', deposito_id: fallido.id }),
     ]);
     await esperarAuditoria();
 
-    const replay = billetera.acreditaUsdReplay();
+    const credito = billetera.acreditaUsdOk();
     const segundo = await post(app, { body, clave: 'rd-t18-clave', correlation: 'rd-t18-b' });
 
     expect(segundo.status).toBe(201);
     expect(segundo.body).toMatchObject({
-      id: fallido.id, cuentaDestino: WALLET_FALLA, monto: '150.00', moneda: 'USD', estado: 'COMPLETADO',
+      id: fallido.id, cuentaDestino: WALLET_FALLA_UNA_VEZ, monto: '150.00', moneda: 'USD', estado: 'COMPLETADO',
     });
     const filas = await depositos();
     expect(filas).toHaveLength(1);
@@ -684,22 +728,377 @@ describe('SPEC-07 registrar-deposito: Billetera USD (RD-T13..RD-T18)', () => {
       expect.objectContaining({ estado: 'TERMINADO', status_http: 201, deposito_id: fallido.id }),
     ]);
 
-    // RD-R08 / INT-R06: sin nueva consulta; misma Idempotency-Key y body idéntico → replay.
+    // RD-R08 / INT-R06: sin nueva consulta; misma Idempotency-Key, mismo cliente_id y body idéntico.
     expect(consulta.peticiones).toHaveLength(1);
     expect(fallo.peticiones).toHaveLength(1);
-    expect(replay.peticiones).toHaveLength(1);
+    expect(credito.peticiones).toHaveLength(1);
     const [original] = fallo.peticiones;
-    const [reintento] = replay.peticiones;
+    const [reintento] = credito.peticiones;
     expect(original.headers['idempotency-key']).toBe(fallido.id);
     expect(reintento.headers['idempotency-key']).toBe(original.headers['idempotency-key']);
-    expect(reintento.body).toEqual(original.body);
     expect(original.body).toEqual({
-      cliente_id: 'usr-agente-1',
-      cuenta_destino_id: WALLET_FALLA,
+      cliente_id: 'usr-falla-una-vez',
       monto: '150.00',
       moneda: 'USD',
+      canal: 'AGENTE',
       metodo_origen: 'EFECTIVO',
       referencia_externa: fallido.id,
     });
+    expect(reintento.body.cliente_id).toBe(original.body.cliente_id);
+    expect(reintento.body).toEqual(original.body);
+  });
+});
+
+describe('SPEC-07 v2.2 registrar-deposito: Billetera USD (RD-T19..RD-T21, RD-R08, RD-R11)', () => {
+  const WALLET = '11111111-1111-4111-8111-111111111111';
+  const BODY_USD = { cuentaDestino: WALLET, monto: '150.00', moneda: 'USD', canal: 'AGENTE' };
+  // SPEC-02 §4: rechazos de negocio del mock por cliente_id (INT-R05 → CUENTA_INACTIVA).
+  const RECHAZOS = [
+    ['55555555-5555-4555-8555-555555555555', 'usr-carrera', 'WALLET_BLOCKED'],
+    ['66666666-6666-4666-8666-666666666666', 'usr-cliente-bloqueado', 'CUSTOMER_BLOCKED'],
+    ['77777777-7777-4777-8777-777777777777', 'usr-sin-usd', 'USD_ACCOUNT_NOT_ENABLED'],
+  ];
+
+  test('RD-T19 33333333-… (BLOCKED) y 44444444-… (CLOSED) → 422 CUENTA_INACTIVA; 0 filas; sin acreditación', async () => {
+    const app = crearApp({ manifest: manifest() });
+    const bloqueada = billetera.billeteraUsdBloqueada();
+    const cerrada = billetera.billeteraUsdCerrada();
+    const credito = billetera.acreditaUsdOk();
+
+    const r1 = await post(app, {
+      body: { ...BODY_USD, cuentaDestino: '33333333-3333-4333-8333-333333333333' }, clave: 'rd-t19-a',
+    });
+    const r2 = await post(app, {
+      body: { ...BODY_USD, cuentaDestino: '44444444-4444-4444-8444-444444444444' }, clave: 'rd-t19-b',
+    });
+
+    esError(r1, 422, 'CUENTA_INACTIVA');
+    esError(r2, 422, 'CUENTA_INACTIVA');
+    expect(bloqueada.peticiones).toHaveLength(1);
+    expect(cerrada.peticiones).toHaveLength(1);
+    expect(credito.peticiones).toHaveLength(0);
+    expect(await depositos()).toHaveLength(0);
+  });
+
+  test('RD-T20 Billetera USD 422 al acreditar (55555555-…, 66666666-…, 77777777-…) → 422 CUENTA_INACTIVA; depósito FALLIDO', async () => {
+    const app = crearApp({ manifest: manifest() });
+
+    for (const [i, [cuentaDestino, titular, codigo]] of RECHAZOS.entries()) {
+      billetera.billeteraUsdExiste(cuentaDestino);
+      const rechazo = billetera.acreditaUsdRechazo(codigo);
+
+      const res = await post(app, { body: { ...BODY_USD, cuentaDestino }, clave: `rd-t20-${i}` });
+
+      esError(res, 422, 'CUENTA_INACTIVA');
+      const fila = (await depositos()).find((f) => f.cuenta_destino === cuentaDestino);
+      expect(fila).toMatchObject({ estado: 'FALLIDO', moneda: 'USD', titular_id: titular });
+      expect(rechazo.peticiones).toHaveLength(1);
+      expect(rechazo.peticiones[0].headers['idempotency-key']).toBe(fila.id);
+      expect(rechazo.peticiones[0].body.cliente_id).toBe(titular);
+      await esperarAuditoria();
+    }
+    expect((await depositos()).map((f) => f.estado)).toEqual(['FALLIDO', 'FALLIDO', 'FALLIDO']);
+  });
+
+  test('RD-R11 acreditar → CUENTA_INACTIVA: la clave queda TERMINADO (422, con depositoId) y repetirla devuelve el mismo 422 sin llamar a billetera', async () => {
+    const app = crearApp({ manifest: manifest() });
+    const [cuentaDestino, , codigo] = RECHAZOS[1];
+    const consulta = billetera.billeteraUsdExiste(cuentaDestino);
+    const rechazo = billetera.acreditaUsdRechazo(codigo);
+    const body = { ...BODY_USD, cuentaDestino };
+
+    const primero = await post(app, { body, clave: 'rd-r11-clave' });
+    esError(primero, 422, 'CUENTA_INACTIVA');
+    const [fallido] = await depositos();
+    expect(await claves()).toEqual([
+      expect.objectContaining({ estado: 'TERMINADO', status_http: 422, deposito_id: fallido.id }),
+    ]);
+    await esperarAuditoria();
+
+    const otraVez = billetera.acreditaUsdOk();
+    const segundo = await post(app, { body, clave: 'rd-r11-clave' });
+
+    expect(segundo.status).toBe(422);
+    expect(segundo.headers['idempotency-replayed']).toBe('true');
+    expect(segundo.body).toEqual(primero.body);
+    expect(consulta.peticiones).toHaveLength(1);
+    expect(rechazo.peticiones).toHaveLength(1);
+    expect(otraVez.peticiones).toHaveLength(0);
+    expect(await depositos()).toEqual([expect.objectContaining({ id: fallido.id, estado: 'FALLIDO' })]);
+  });
+
+  test('RD-T21 Billetera USD 202 → 202 PROCESANDO; sin post-procesos; repetir la clave → el mismo 202', async () => {
+    const app = crearApp({ manifest: manifest() });
+    const consulta = billetera.billeteraUsdExiste(WALLET);
+    const pendiente = billetera.acreditaUsdPendiente();
+    const otraVez = billetera.acreditaUsdOk();
+    const postProcesos = jest.spyOn(pipeline, 'ejecutarPostProcesos');
+
+    const primero = await post(app, { body: BODY_USD, clave: 'rd-t21-clave', correlation: 'rd-t21' });
+
+    expect(primero.status).toBe(202);
+    expect(primero.headers['idempotency-replayed']).toBeUndefined();
+    expect(primero.body).toEqual({
+      id: expect.stringMatching(PATRON_UUID),
+      cuentaDestino: WALLET,
+      monto: '150.00',
+      moneda: 'USD',
+      canal: 'AGENTE',
+      referencia: null,
+      estado: 'PROCESANDO',
+      creadoEn: expect.stringMatching(PATRON_ISO),
+      actualizadoEn: expect.stringMatching(PATRON_ISO),
+      extensiones: {},
+    });
+    const filas = await depositos();
+    expect(filas).toEqual([expect.objectContaining({
+      id: primero.body.id, estado: 'PROCESANDO', titular_id: 'usr-cliente-1',
+    })]);
+    expect(postProcesos).not.toHaveBeenCalled();
+    expect(pendiente.peticiones).toHaveLength(1);
+    expect(await claves()).toEqual([
+      expect.objectContaining({ estado: 'TERMINADO', status_http: 202, deposito_id: primero.body.id }),
+    ]);
+    await esperarAuditoria();
+
+    const segundo = await post(app, { body: BODY_USD, clave: 'rd-t21-clave' });
+
+    expect(segundo.status).toBe(202);
+    expect(segundo.headers['idempotency-replayed']).toBe('true');
+    expect(segundo.body).toEqual(primero.body);
+    expect(consulta.peticiones).toHaveLength(1);
+    expect(otraVez.peticiones).toHaveLength(0);
+    expect(postProcesos).not.toHaveBeenCalled();
+    expect(await depositos()).toEqual([expect.objectContaining({ estado: 'PROCESANDO' })]);
+  });
+
+  test('RD-R08 reintentar un depósito USD FALLIDO y el replay responde FALLIDO (RECHAZADO) → FALLIDO y 502 BILLETERA_NO_DISPONIBLE con depositoId', async () => {
+    crearApp({ manifest: manifest() });
+    const id = '7f1c2e9a-0b1d-4c5e-9f00-123456789abc';
+    await insertarUsd(id, 'FALLIDO', { cuenta: WALLET, titular: 'usr-cliente-1' });
+    const replay = billetera.acreditaUsdReplay({ estado: 'FALLIDO' });
+    const postProcesos = jest.spyOn(pipeline, 'ejecutarPostProcesos');
+
+    await expect(service.reintentar(id, AGENTE_1, 'rd-r08-rechazado'))
+      .rejects.toMatchObject({ codigo: 'BILLETERA_NO_DISPONIBLE', status: 502, depositoId: id });
+
+    expect(replay.peticiones).toHaveLength(1);
+    expect(replay.peticiones[0].headers['idempotency-key']).toBe(id);
+    expect(replay.peticiones[0].body).toEqual({
+      cliente_id: 'usr-cliente-1', monto: '150.00', moneda: 'USD', canal: 'AGENTE',
+      metodo_origen: 'EFECTIVO', referencia_externa: id,
+    });
+    expect((await depositos())[0]).toMatchObject({ id, estado: 'FALLIDO' });
+    expect(postProcesos).not.toHaveBeenCalled();
+  });
+});
+
+describe('SPEC-07 v2.2 reconciliación con la BD real (RD-T22..RD-T24, RD-R13)', () => {
+  const WALLET = '11111111-1111-4111-8111-111111111111';
+  // SPEC-02 §4: aaaaaaaa-… / usr-pendiente (202 y luego COMPLETADO), bbbbbbbb-… / usr-pendiente-falla
+  // (202 y luego FALLIDO).
+  const WALLET_PENDIENTE = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+  const WALLET_PENDIENTE_FALLA = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+  const ID_1 = '7f1c2e9a-0b1d-4c5e-9f00-123456789abc';
+  const ID_2 = '3f1b2c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d';
+  const ID_3 = '5a6b7c8d-9e0f-4a1b-8c2d-3e4f5a6b7c8d';
+
+  // POST que Billetera USD deja pendiente (202 VALIDADO) y luego envejece la fila más allá de
+  // RECONCILIACION_ANTIGUEDAD_MS. Devuelve el depósito y la petición original a Billetera USD.
+  async function depositoPendiente(app, cuentaDestino, clave) {
+    billetera.billeteraUsdExiste(cuentaDestino);
+    const pendiente = billetera.acreditaUsdPendiente();
+    const res = await post(app, {
+      body: { cuentaDestino, monto: '150.00', moneda: 'USD', canal: 'AGENTE' }, clave,
+    });
+    expect(res.status).toBe(202);
+    expect(pendiente.peticiones).toHaveLength(1);
+    // La auditoría (FK a depositos) debe terminar antes: su bloqueo haría que SKIP LOCKED salte la fila.
+    await esperarAuditoria();
+    await envejecer(res.body.id, '1 minute');
+    return { id: res.body.id, original: pendiente.peticiones[0] };
+  }
+
+  function mismoBody(reenvio, original, id) {
+    expect(reenvio.headers['idempotency-key']).toBe(id);
+    expect(reenvio.headers['idempotency-key']).toBe(original.headers['idempotency-key']);
+    expect(reenvio.body).toEqual(original.body);
+  }
+
+  test('RD-T22 replay COMPLETADO → COMPLETADO y post-procesos una sola vez (contexto.cuenta = null); body idéntico al original', async () => {
+    const app = crearApp({ manifest: manifest() });
+    const postProcesos = jest.spyOn(pipeline, 'ejecutarPostProcesos');
+    const { id, original } = await depositoPendiente(app, WALLET_PENDIENTE, 'rd-t22-completado');
+    expect(postProcesos).not.toHaveBeenCalled();
+    const replay = billetera.acreditaUsdReplay({ estado: 'COMPLETADO' });
+
+    const resumen = await reconciliacion.reconciliar();
+
+    expect(resumen).toEqual({ completados: 1, fallidos: 0, pendientes: 0 });
+    expect((await depositos())[0]).toMatchObject({ id, estado: 'COMPLETADO' });
+    expect(replay.peticiones).toHaveLength(1);
+    mismoBody(replay.peticiones[0], original, id);
+    expect(original.body.cliente_id).toBe('usr-pendiente');
+    expect(postProcesos).toHaveBeenCalledTimes(1);
+    const [deposito, contexto] = postProcesos.mock.calls[0];
+    expect(deposito).toMatchObject({ id, estado: 'COMPLETADO', moneda: 'USD' });
+    expect(contexto).toMatchObject({ cuenta: null, usuario: { id: 'usr-agente-1', roles: [] } });
+
+    // Un segundo ciclo ya no lo toma: sin otra acreditación ni otro post-proceso.
+    const otraVez = billetera.acreditaUsdReplay({ estado: 'COMPLETADO' });
+    await expect(reconciliacion.reconciliar())
+      .resolves.toEqual({ completados: 0, fallidos: 0, pendientes: 0 });
+    expect(otraVez.peticiones).toHaveLength(0);
+    expect(postProcesos).toHaveBeenCalledTimes(1);
+  });
+
+  test('RD-T22 replay FALLIDO → FALLIDO; sin post-procesos; body idéntico al original', async () => {
+    const app = crearApp({ manifest: manifest() });
+    const postProcesos = jest.spyOn(pipeline, 'ejecutarPostProcesos');
+    const { id, original } = await depositoPendiente(app, WALLET_PENDIENTE_FALLA, 'rd-t22-fallido');
+    const replay = billetera.acreditaUsdReplay({ estado: 'FALLIDO' });
+
+    const resumen = await reconciliacion.reconciliar();
+
+    expect(resumen).toEqual({ completados: 0, fallidos: 1, pendientes: 0 });
+    expect((await depositos())[0]).toMatchObject({ id, estado: 'FALLIDO' });
+    expect(replay.peticiones).toHaveLength(1);
+    mismoBody(replay.peticiones[0], original, id);
+    expect(original.body.cliente_id).toBe('usr-pendiente-falla');
+    expect(postProcesos).not.toHaveBeenCalled();
+  });
+
+  test('RD-T22 replay VALIDADO → sigue en PROCESANDO (actualizado_en intacto); body idéntico al original; se reintenta en el siguiente ciclo', async () => {
+    const app = crearApp({ manifest: manifest() });
+    const postProcesos = jest.spyOn(pipeline, 'ejecutarPostProcesos');
+    const { id, original } = await depositoPendiente(app, WALLET_PENDIENTE, 'rd-t22-validado');
+    const [antes] = await depositos();
+    const replay = billetera.acreditaUsdReplay({ estado: 'VALIDADO' });
+
+    const resumen = await reconciliacion.reconciliar();
+
+    expect(resumen).toEqual({ completados: 0, fallidos: 0, pendientes: 1 });
+    const [despues] = await depositos();
+    expect(despues).toMatchObject({ id, estado: 'PROCESANDO' });
+    expect(despues.actualizado_en.getTime()).toBe(antes.actualizado_en.getTime());
+    expect(replay.peticiones).toHaveLength(1);
+    mismoBody(replay.peticiones[0], original, id);
+    expect(postProcesos).not.toHaveBeenCalled();
+
+    const siguiente = billetera.acreditaUsdReplay({ estado: 'COMPLETADO' });
+    await expect(reconciliacion.reconciliar())
+      .resolves.toEqual({ completados: 1, fallidos: 0, pendientes: 0 });
+    mismoBody(siguiente.peticiones[0], original, id);
+    expect(postProcesos).toHaveBeenCalledTimes(1);
+  });
+
+  test('RD-T23 dos reconciliaciones simultáneas sobre el mismo depósito → 1 sola lo procesa (una acreditación, un post-proceso)', async () => {
+    crearApp({ manifest: manifest() });
+    await insertarUsd(ID_1, 'PROCESANDO', { cuenta: WALLET, titular: 'usr-cliente-1', hace: '1 minute' });
+    const replay = billetera.acreditaUsdReplay({ estado: 'COMPLETADO' });
+    const sobrante = billetera.acreditaUsdReplay({ estado: 'COMPLETADO' });
+    const postProcesos = jest.spyOn(pipeline, 'ejecutarPostProcesos');
+
+    // La primera reconciliación retiene la fila bloqueada (no llama a billetera) hasta que la
+    // segunda haya hecho su SELECT ... FOR UPDATE SKIP LOCKED: así se solapan siempre.
+    const tomados = [];
+    let avisarSegunda;
+    const segundaTomo = new Promise((r) => { avisarSegunda = r; });
+    const tomarReal = repository.tomarParaReconciliar;
+    jest.spyOn(repository, 'tomarParaReconciliar').mockImplementation(async (...args) => {
+      const filas = await tomarReal(...args);
+      tomados.push(filas.map((f) => f.id));
+      if (tomados.length === 2) avisarSegunda();
+      return filas;
+    });
+    const acreditarReal = billeteraClient.acreditar;
+    let tope;
+    jest.spyOn(billeteraClient, 'acreditar').mockImplementation(async (...args) => {
+      // Tope de 3 s por si la segunda quedara bloqueada esperando la fila (sin SKIP LOCKED).
+      await Promise.race([segundaTomo, new Promise((r) => { tope = setTimeout(r, 3000); })]);
+      clearTimeout(tope);
+      return acreditarReal(...args);
+    });
+
+    const resumenes = await Promise.all([reconciliacion.reconciliar(), reconciliacion.reconciliar()]);
+
+    expect(tomados).toHaveLength(2);
+    expect(tomados.map((t) => t.length).sort()).toEqual([0, 1]);
+    expect(resumenes.map((r) => r.completados).sort()).toEqual([0, 1]);
+    expect(resumenes.every((r) => r.fallidos === 0 && r.pendientes === 0)).toBe(true);
+    expect(replay.peticiones).toHaveLength(1);
+    expect(sobrante.peticiones).toHaveLength(0);
+    expect(postProcesos).toHaveBeenCalledTimes(1);
+    expect((await depositos())[0]).toMatchObject({ id: ID_1, estado: 'COMPLETADO' });
+  });
+
+  test('RD-T24 depósito PEN en PROCESANDO (antiguo) → la reconciliación no lo toma; tampoco un USD reciente', async () => {
+    crearApp({ manifest: manifest() });
+    await insertarDeposito(ID_1, 'PROCESANDO');
+    await envejecer(ID_1, '2 hours');
+    await insertarUsd(ID_2, 'PROCESANDO', { cuenta: WALLET, titular: 'usr-cliente-1' });
+    await insertarUsd(ID_3, 'PROCESANDO', { cuenta: WALLET, titular: 'usr-cliente-1', hace: '1 minute' });
+    const antes = await depositos();
+    const creditoPen = billetera.acreditaOk(CUENTA);
+    const replay = billetera.acreditaUsdReplay({ estado: 'COMPLETADO' });
+    const sobrante = billetera.acreditaUsdReplay({ estado: 'COMPLETADO' });
+
+    const resumen = await reconciliacion.reconciliar();
+
+    // Solo el USD antiguo (ID_3); el PEN (RD-R14) y el USD reciente quedan como estaban.
+    expect(resumen).toEqual({ completados: 1, fallidos: 0, pendientes: 0 });
+    expect(creditoPen.peticiones).toHaveLength(0);
+    expect(replay.peticiones).toHaveLength(1);
+    expect(replay.peticiones[0].headers['idempotency-key']).toBe(ID_3);
+    expect(sobrante.peticiones).toHaveLength(0);
+    const porId = Object.fromEntries((await depositos()).map((f) => [f.id, f]));
+    expect(porId[ID_1].estado).toBe('PROCESANDO');
+    expect(porId[ID_2].estado).toBe('PROCESANDO');
+    expect(porId[ID_3].estado).toBe('COMPLETADO');
+    const previo = Object.fromEntries(antes.map((f) => [f.id, f]));
+    expect(porId[ID_1].actualizado_en.getTime()).toBe(previo[ID_1].actualizado_en.getTime());
+    expect(porId[ID_2].actualizado_en.getTime()).toBe(previo[ID_2].actualizado_en.getTime());
+  });
+
+  test('RD-R13 Billetera USD 422 (CUENTA_INACTIVA) → FALLIDO; 503 (BILLETERA_NO_DISPONIBLE) → sigue en PROCESANDO', async () => {
+    crearApp({ manifest: manifest() });
+    // ORDER BY actualizado_en: ID_1 (más antiguo) se reenvía primero.
+    await insertarUsd(ID_1, 'PROCESANDO', { cuenta: WALLET, titular: 'usr-cliente-1', hace: '3 minutes' });
+    await insertarUsd(ID_2, 'PROCESANDO', { cuenta: WALLET, titular: 'usr-cliente-1', hace: '2 minutes' });
+    const rechazo = billetera.acreditaUsdRechazo('WALLET_BLOCKED');
+    const falla = billetera.acreditaUsdFalla({ status: 503 });
+
+    const resumen = await reconciliacion.reconciliar();
+
+    expect(resumen).toEqual({ completados: 0, fallidos: 1, pendientes: 1 });
+    expect(rechazo.peticiones[0].headers['idempotency-key']).toBe(ID_1);
+    expect(falla.peticiones[0].headers['idempotency-key']).toBe(ID_2);
+    const porId = Object.fromEntries((await depositos()).map((f) => [f.id, f]));
+    expect(porId[ID_1].estado).toBe('FALLIDO');
+    expect(porId[ID_2].estado).toBe('PROCESANDO');
+  });
+
+  test('RD-R13 sigue en PROCESANDO más de RECONCILIACION_ALERTA_MS → logger.error con depositoId; uno reciente no alerta', async () => {
+    crearApp({ manifest: manifest() });
+    await insertarUsd(ID_1, 'PROCESANDO', { cuenta: WALLET, titular: 'usr-cliente-1', hace: '2 hours' });
+    await insertarUsd(ID_2, 'PROCESANDO', { cuenta: WALLET, titular: 'usr-cliente-1', hace: '1 minute' });
+    billetera.acreditaUsdReplay({ estado: 'VALIDADO' });
+    billetera.acreditaUsdReplay({ estado: 'VALIDADO' });
+    const errores = [];
+    const original = logger.child.bind(logger);
+    jest.spyOn(logger, 'child').mockImplementation((...args) => {
+      const hijo = original(...args);
+      const error = hijo.error.bind(hijo);
+      hijo.error = (obj, ...resto) => { errores.push(obj); return error(obj, ...resto); };
+      return hijo;
+    });
+
+    const resumen = await reconciliacion.reconciliar();
+
+    expect(resumen).toEqual({ completados: 0, fallidos: 0, pendientes: 2 });
+    const alertas = errores.filter((e) => e && e.enProcesandoMs !== undefined);
+    expect(alertas).toEqual([expect.objectContaining({ depositoId: ID_1 })]);
+    expect(alertas[0].enProcesandoMs).toBeGreaterThan(config.reconciliacion.alertaMs);
+    expect((await depositos()).map((f) => f.estado)).toEqual(['PROCESANDO', 'PROCESANDO']);
   });
 });

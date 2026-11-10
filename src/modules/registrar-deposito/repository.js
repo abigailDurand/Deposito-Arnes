@@ -12,8 +12,8 @@ async function insertar(tx, deposito) {
   const { rows } = await tx.query(
     `INSERT INTO depositos (
        id, cuenta_destino, monto, moneda, monto_acreditar, moneda_acreditar,
-       canal, referencia, estado, usuario_id
-     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'PENDIENTE', $9)
+       canal, referencia, estado, usuario_id, titular_id
+     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'PENDIENTE', $9, $10)
      RETURNING *`,
     [
       deposito.id,
@@ -25,6 +25,8 @@ async function insertar(tx, deposito) {
       deposito.canal,
       deposito.referencia,
       deposito.usuarioId,
+      // DOM-R11: el titular se guarda para reenviar un body idéntico (RD-R08, RD-R13).
+      deposito.titularId ?? null,
     ],
   );
   return rows[0];
@@ -52,4 +54,20 @@ async function cambiarEstado(db, id, de, a) {
   return rows[0];
 }
 
-module.exports = { insertar, buscarPorId, cambiarEstado };
+// RD-R13: solo Billetera USD (cuenta_destino UUID en minúsculas, RD-R02). Las filas quedan
+// bloqueadas hasta el fin de `tx`; SKIP LOCKED: dos reconciliaciones simultáneas no toman la misma.
+async function tomarParaReconciliar(tx, antiguedadMs, limite) {
+  const { rows } = await tx.query(
+    `SELECT * FROM depositos
+     WHERE estado = 'PROCESANDO'
+       AND cuenta_destino ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+       AND actualizado_en < now() - ($1::bigint * interval '1 millisecond')
+     ORDER BY actualizado_en
+     LIMIT $2
+     FOR UPDATE SKIP LOCKED`,
+    [antiguedadMs, limite],
+  );
+  return rows;
+}
+
+module.exports = { insertar, buscarPorId, cambiarEstado, tomarParaReconciliar };
