@@ -9,6 +9,7 @@
   },
   "scripts": {
     "start": "node src/server.js",
+    "migrar": "node scripts/migrar.js",
     "test": "jest --coverage --runInBand --passWithNoTests",
     "test:unit": "jest --selectProjects unit --passWithNoTests",
     "test:integration": "jest --selectProjects integration --runInBand --passWithNoTests"

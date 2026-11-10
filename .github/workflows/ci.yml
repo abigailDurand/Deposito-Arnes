@@ -1,0 +1,132 @@
+# SPEC-13 · CI/CD de deposito-service.
+# - Todo PR y todo push a main: job `verificar` (npm ci + bash init.sh completo con PostgreSQL 16).
+# - Solo push a main y en verde: `publicar` (imagen en GHCR) y `avisar` (repository_dispatch al integrador).
+# Este repo no despliega ni tiene credenciales de la nube (CI-R03). Ningún secreto ni URL real aquí (CI-R05).
+# Las actions se fijan por SHA de commit (comentario = versión).
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# CI-R03: permisos mínimos; solo `publicar` añade packages: write.
+permissions:
+  contents: read
+
+# CI-R06: en main, una ejecución nueva cancela la anterior aún en curso (publicación incluida).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref == 'refs/heads/main' }}
+
+env:
+  # CI-R02: GHCR exige minúsculas.
+  IMAGEN: ghcr.io/abigaildurand/deposito-service
+
+jobs:
+  verificar:
+    # CI-R01 / CI-R06: cada job tiene su propio PostgreSQL 16 de servicio; nunca se comparte.
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        # Credenciales desechables del contenedor de CI (las mismas de docker-compose.yml); no son secretos.
+        env:
+          POSTGRES_USER: deposito
+          POSTGRES_PASSWORD: deposito
+          POSTGRES_DB: deposito
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U deposito -d deposito"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      # Variables de .env.example necesarias para las pruebas. tests/setup/env.js fija el resto
+      # (billeteras simuladas con nock, umbrales de prueba) y tests/setup/globalSetup.js genera un
+      # par de claves JWT de prueba en tests/.tmp/ y crea/reinicia la BD deposito_test.
+      DATABASE_URL_TEST: postgres://deposito:deposito@localhost:5432/deposito_test
+      LOG_LEVEL: silent
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Instalar dependencias
+        run: npm ci
+
+      - name: Verificar (bash init.sh completo)
+        run: bash init.sh
+
+  publicar:
+    # CI-R02: solo push a main con `verificar` en verde.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: verificar
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Calcular el tag (SHA corto)
+        id: version
+        run: echo "tag=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      # CI-R03: GHCR con el GITHUB_TOKEN del propio workflow.
+      - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: Dockerfile
+          push: true
+          tags: |
+            ${{ env.IMAGEN }}:${{ steps.version.outputs.tag }}
+            ${{ env.IMAGEN }}:main
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+
+  avisar:
+    # CI-R04: tras publicar, repository_dispatch al integrador (que es quien despliega).
+    needs: publicar
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Avisar a Deposito-integrador-
+        env:
+          # Fine-grained PAT o GitHub App, solo con acceso a ese repo (CI-R05). Nunca se imprime.
+          GH_TOKEN: ${{ secrets.ORQUESTADOR_TOKEN }}
+          TAG: ${{ needs.publicar.outputs.tag }}
+          COMMIT: ${{ github.sha }}
+        run: |
+          if [ -z "${GH_TOKEN}" ]; then
+            echo "::warning::ORQUESTADOR_TOKEN no está configurado: no se avisa al integrador."
+            exit 0
+          fi
+          jq -n \
+            --arg imagen "${IMAGEN}" \
+            --arg tag "${TAG}" \
+            --arg commit "${COMMIT}" \
+            '{event_type: "servicio-actualizado",
+              client_payload: {servicio: "deposito-service", imagen: $imagen, tag: $tag, commit: $commit}}' \
+            | gh api --method POST repos/abigailDurand/Deposito-integrador-/dispatches --input - --silent

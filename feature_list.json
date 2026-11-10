@@ -249,6 +249,27 @@
         "UIF-T01 a UIF-T07 pasan"
       ],
       "status": "done"
+    },
+    {
+      "id": 13,
+      "spec": "specs-v2/13-ci-cd.md",
+      "prefijo": "CI",
+      "name": "ci-cd",
+      "title": "CI/CD: GitHub Actions → GHCR → aviso al integrador; migraciones idempotentes; apagado limpio",
+      "depende_de": [
+        0,
+        5,
+        6,
+        7
+      ],
+      "acceptance": [
+        "Un PR muestra si init.sh pasa, sin publicar nada",
+        "Un push a main en verde deja la imagen en GHCR con el tag del commit y avisa al integrador",
+        "Migrar una base existente añade lo que falta sin perder datos, y migrar dos veces no cambia nada",
+        "Un rolling update no corta peticiones ni deja una reconciliación a medias",
+        "CI-T01 a CI-T07 pasan"
+      ],
+      "status": "done"
     }
   ]
 }

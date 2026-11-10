@@ -1,5 +1,5 @@
--- SPEC-05 · Idempotencia. IDE-R02: la clave es única por usuario.
-CREATE TABLE claves_idempotencia (
+-- SPEC-05 · Idempotencia. IDE-R02: la clave es única por usuario. CI-R08: idempotente.
+CREATE TABLE IF NOT EXISTS claves_idempotencia (
     usuario_id      VARCHAR(50)  NOT NULL,
     clave           VARCHAR(100) NOT NULL,
     hash_solicitud  CHAR(64)     NOT NULL,
@@ -10,4 +10,4 @@ CREATE TABLE claves_idempotencia (
     creado_en       TIMESTAMPTZ  NOT NULL DEFAULT now(),
     PRIMARY KEY (usuario_id, clave)
 );
-CREATE INDEX idx_claves_creado ON claves_idempotencia (creado_en);
+CREATE INDEX IF NOT EXISTS idx_claves_creado ON claves_idempotencia (creado_en);

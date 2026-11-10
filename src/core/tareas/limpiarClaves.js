@@ -16,11 +16,33 @@ async function limpiar() {
   }
 }
 
+let temporizador = null;
+let limpiezaEnCurso = null;
+
+// CI-R10: se guarda la limpieza en curso para que detener() pueda esperarla.
+function tarea() {
+  if (limpiezaEnCurso === null) {
+    limpiezaEnCurso = limpiar().finally(() => {
+      limpiezaEnCurso = null;
+    });
+  }
+  return limpiezaEnCurso;
+}
+
 // IDE-R09 / PIP-R12: lo llama server.js. unref: el temporizador no mantiene vivo el proceso.
 function iniciar() {
-  const temporizador = setInterval(limpiar, UNA_HORA_MS);
+  if (temporizador !== null) clearInterval(temporizador);
+  temporizador = setInterval(tarea, UNA_HORA_MS);
   temporizador.unref();
   return temporizador;
 }
 
-module.exports = { iniciar };
+// CI-R10 / CI-R12: deja de programar limpiezas y espera la que esté en curso.
+// Sin iniciar() previo no falla. limpiar() nunca rechaza.
+async function detener() {
+  if (temporizador !== null) clearInterval(temporizador);
+  temporizador = null;
+  if (limpiezaEnCurso !== null) await limpiezaEnCurso;
+}
+
+module.exports = { iniciar, detener };

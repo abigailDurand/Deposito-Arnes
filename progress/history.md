@@ -303,3 +303,16 @@
 - **Verificación:** 0/600 iteraciones con deadlock; 6/6 `init.sh` completos en verde (tester) + 1 (leader), 494/494.
 - **Recordatorio:** no correr dos `init.sh` a la vez contra la misma BD.
 - Docker compose recreado (`down -v` + `up -d --build`): `depositos.titular_id` presente; pendiente 5 resuelto en local.
+
+## 2026-11-10 — SPEC-13 ci-cd (rama `ci-cd`)
+- **Origen:** PR #2 fusionado en `main`. El humano decide: este repo solo prueba, publica en GHCR y avisa al integrador
+  (`abigailDurand/Deposito-integrador-`), que despliega en Kubernetes. Propuesta `docs/specs-propuestas/13-ci-cd.md`
+  promovida por el humano; feature 13 añadida (depende de 0, 5, 6, 7).
+- **Agentes:** desarrolladorback → tester → revisor APROBADO (`progress/impl_13.md`, `tests/reporte.md`, `progress/review_13.md`).
+- **Archivos:** `.github/workflows/ci.yml` (verificar / publicar en `ghcr.io/abigaildurand/deposito-service` / avisar por
+  `repository_dispatch`), `scripts/migrar.js` + `npm run migrar`, `db/*.sql` idempotentes, apagado limpio en
+  `src/server.js` + `detener()` de reconciliación y `limpiarClaves`, `APAGADO_TIMEOUT_MS`, `Dockerfile` con `scripts/` y `db/`.
+- **Pruebas:** CI-T01..T07; `bash init.sh` 507/507, 0 todo. `actionlint` sin errores; actions fijadas por SHA (verificadas).
+- **Pendientes:** secreto `ORQUESTADOR_TOKEN` (fine-grained PAT, Contents R/W en el integrador); el integrador debe
+  montar en el Job de migración el mismo ConfigMap/Secret que el Deployment; `imagePullSecret` si el paquete GHCR es
+  privado; `.env` local sin `BILLETERA_USD_URL`. Obs. no bloqueante: la imagen incluye todo `scripts/`.

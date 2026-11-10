@@ -1,5 +1,6 @@
 -- SPEC-12 · Alerta UIF. UIF-R07: estado_reporte cambia después; por eso no va en la auditoría.
-CREATE TABLE alertas_uif (
+-- CI-R08: idempotente.
+CREATE TABLE IF NOT EXISTS alertas_uif (
     id              UUID PRIMARY KEY,
     deposito_id     UUID          NOT NULL UNIQUE REFERENCES depositos(id),
     monto           NUMERIC(15,2) NOT NULL,
