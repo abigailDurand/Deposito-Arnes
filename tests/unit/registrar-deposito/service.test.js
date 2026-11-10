@@ -788,8 +788,8 @@ describe('SPEC-07 v2.2 reconciliacion.iniciar (RD-R13, temporizador)', () => {
     jest.useFakeTimers();
   });
 
-  afterEach(() => {
-    reconciliacion.detener();
+  afterEach(async () => {
+    await reconciliacion.detener();
     jest.useRealTimers();
   });
 
@@ -806,7 +806,7 @@ describe('SPEC-07 v2.2 reconciliacion.iniciar (RD-R13, temporizador)', () => {
     await jest.advanceTimersByTimeAsync(config.reconciliacion.intervaloMs);
     expect(ciclo).toHaveBeenCalledTimes(2);
 
-    reconciliacion.detener();
+    await reconciliacion.detener();
     await jest.advanceTimersByTimeAsync(config.reconciliacion.intervaloMs * 3);
     expect(ciclo).toHaveBeenCalledTimes(2);
     expect(jest.getTimerCount()).toBe(0);

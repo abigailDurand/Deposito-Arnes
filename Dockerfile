@@ -9,6 +9,9 @@ RUN npm ci --omit=dev && npm cache clean --force
 COPY src/ ./src/
 # D15: el manifest conserva su ruta, que es el valor por defecto de MANIFEST_PATH.
 COPY specs-v2/manifest.yaml ./specs-v2/manifest.yaml
+# SPEC-13: el Job de migración del integrador ejecuta `node scripts/migrar.js` con esta misma imagen.
+COPY scripts/ ./scripts/
+COPY db/ ./db/
 
 USER node
 EXPOSE 3000

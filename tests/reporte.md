@@ -1445,3 +1445,72 @@ All files                    |   99.76 |    94.66 |   99.32 |   99.87
 ```
 
 Todo en el 80 % o por encima.
+
+## SPEC-13
+
+- **Tester** · 2026-11-10 · Feature 13 (`ci-cd`), spec v1.0 · implementación `progress/impl_13.md`.
+- **Ejecución:** `bash init.sh` completo dos veces, con PostgreSQL real (contenedor `chalenge-db-1`) →
+  exit 0, `Test Suites: 25 passed, 25 total` · `Tests: 507 passed, 507 total` (0 todo) ·
+  `[OK] SPEC-13: todos sus casos tienen prueba` · `[OK] Todas las pruebas en verde` · `[OK] Entorno listo`.
+- **Aislamiento (CI-T01..T04):** cada prueba crea su propia BD `deposito_ci_<pid>_<aleatorio>` (conectándose a
+  `/postgres` del servidor de `DATABASE_URL_TEST`) y la borra en `afterEach` con `DROP DATABASE ... WITH (FORCE)`;
+  las carpetas SQL a medida van en `os.tmpdir()` y también se borran. `deposito_test` solo se lee (como
+  referencia del esquema que deja `globalSetup`, CI-R09). Tras las corridas: 0 BD `deposito_ci_%` y 0 carpetas
+  `migrar-ci-*`. `limpiar()` sigue en `beforeEach` por la regla general, aunque estas pruebas no usan `deposito_test`.
+- **Apagado (CI-T05..T07):** unitarias con `crearApagado` de `src/server.js`; `pool` y `logger` falsos (`jest.fn`),
+  `salir` espiado. Sin temporizadores ni handles abiertos: `afterEach` hace `await reconciliacion.detener()` y
+  `await limpiarClaves.detener()`, restaura timers reales y los diferidos se resuelven en `finally`.
+- **Cambio en una prueba existente:** `tests/unit/registrar-deposito/service.test.js` (RD-R13) ahora hace
+  `await reconciliacion.detener()` en el `afterEach` y en la prueba del temporizador (sugerido por impl_13; sigue verde).
+
+### Casos cubiertos
+
+| Caso | Archivo | Qué comprueba |
+|---|---|---|
+| CI-T01 | `tests/integration/ci-cd/migrar.test.js` | BD vacía → `migrar({ pool, logger })` devuelve los 6 `db/*.sql` en orden; 7 tablas; esquema (columnas, restricciones, índices, triggers, funciones) **igual** al de `deposito_test`; `titular_id` nullable; 6 límites y 1 tipo de cambio. Segunda vez → mismo esquema y mismos datos (todas las tablas), sin error |
+| CI-T01 | idem | `node scripts/migrar.js` (proceso real, `DATABASE_URL` = BD temporal) → código 0 y stderr vacío, dos veces; esquema y datos idénticos entre ambas |
+| CI-T01 | idem | Un límite cambiado a mano (`AGENTE/PEN 2500.00`) se conserva al migrar otra vez (`ON CONFLICT DO NOTHING`), siguen siendo 6 filas |
+| CI-T02 | idem | BD con el `00-core.sql` previo a SPEC-01 v1.2 (sin `titular_id`, copiado de `ce45722~1`) + resto de `db/*.sql`; 1 depósito y 1 fila de auditoría (`0011-0123-456789`, `usr-agente-1`) → `migrar` añade `titular_id VARCHAR(100)` nullable; el depósito queda igual con `titular_id: null`; el resto de tablas sin cambios |
+| CI-T03 | idem | 3 `migrar` simultáneos con 3 pools distintos → los 3 `fulfilled`; 7 tablas; esquema igual al de referencia; 6 límites y 1 tipo de cambio (sin duplicados) |
+| CI-T03 | idem | Otra sesión con `pg_advisory_xact_lock(hashtext(CLAVE_BLOQUEO))` → `migrar` no termina ni crea tablas en 300 ms; tras su `COMMIT`, termina y aplica todo |
+| CI-T04 | idem | Carpeta con los `db/*.sql` + `99-roto.sql` (error de sintaxis) → rechaza con `/99-roto\.sql/`; 0 tablas y 0 funciones (rollback completo); el lock quedó libre (una migración posterior entra) |
+| CI-T04 | idem | `node scripts/migrar.js` sobre una BD con `tipos_cambio (x INT)` previa → `11-conversion-moneda.sql` falla → código ≠ 0; solo queda la tabla previa, intacta |
+| CI-T05 | `tests/unit/ci-cd/apagado.test.js` | `http.Server` real con petición keep-alive retenida; `apagar('SIGTERM')` → `server.listening === false` y conexión nueva `ECONNREFUSED`; en 100 ms ni `pool.end` ni `salir`; al liberar, la petición responde 200 con su cuerpo y el orden es `respuesta → pool.end → salir(0)`; `logger.info` con `senal`, sin `logger.error`. Usa `reconciliacion` y `limpiarClaves` reales sin `iniciar()` previo (CI-R12) |
+| CI-T06 | idem | `reconciliacion` **real** con `intervaloMs = 20` y `service.reconciliar` espiado (ciclo retenido por un diferido); `apagar` → en 150 ms ni `pool.end` ni `salir`, y no arranca otro ciclo (detener dejó de programar); al terminar el ciclo: `ciclo:inicio → ciclo:fin → pool.end → salir(0)` |
+| CI-T06 | idem | `limpiarClaves` real (timers falsos para disparar la hora) con `borrarAntiguas` retenido → `pool.end` espera a que termine la limpieza: `limpieza:fin → pool.end → salir(0)` |
+| CI-T07 | idem | Tarea cuyo `detener()` nunca resuelve, `timeoutMs: 100` → `salir(1)` una vez (< 1 s), `logger.error` con `timeoutMs`, sin `pool.end`; la segunda señal (`SIGINT`) devuelve la **misma** promesa y registra `logger.info` con `senal`; `detener` y `server.close` llamados una sola vez; una tercera señal tras el timeout tampoco repite nada |
+| CI-T07 | idem | Segunda señal durante un apagado que sí termina → misma promesa; `detener`, `server.close`, `pool.end` y `salir(0)` una sola vez |
+
+**Justificación de tipo (CI-T06):** se usa la `reconciliacion` real (su `detener()` es lo que se prueba) con
+`service.reconciliar` espiado en vez de un ciclo bloqueado por nock: el §2 pone este caso en un archivo unitario y
+así no hace falta un depósito PROCESANDO en BD; el ciclo retenido por un diferido es equivalente a un nock con
+`delay` y no depende de tiempos. **CI-T07** usa una tarea falsa porque necesita un `detener()` que no termina nunca.
+
+- **Casos en `test.todo`:** ninguno.
+- **Pruebas fallidas:** ninguna.
+- **Nota:** CI-T01..T04 se apoyan en `migrar()` y `scripts/migrar.js`, que están fuera de `collectCoverageFrom`
+  (`src/core/`, `src/modules/`), así que no suman cobertura; `limpiarClaves.js` y `reconciliacion.js` sí.
+
+#### Cobertura (`src/core/` y `src/modules/`)
+
+```
+-----------------------------|---------|----------|---------|---------
+File                         | % Stmts | % Branch | % Funcs | % Lines
+-----------------------------|---------|----------|---------|---------
+All files                    |   99.76 |    94.56 |   99.35 |   99.87
+ core                        |   99.46 |    94.73 |   97.14 |   99.42
+ core/clients                |     100 |    95.83 |     100 |     100
+ core/middlewares            |     100 |    94.87 |     100 |     100
+ core/repositories           |     100 |     87.5 |     100 |     100
+ core/tareas                 |     100 |       90 |     100 |     100
+ modules/alerta-uif          |     100 |       80 |     100 |     100
+ modules/consultar-deposito  |     100 |      100 |     100 |     100
+ modules/conversion-moneda   |     100 |      100 |     100 |     100
+ modules/historial-depositos |    98.7 |     91.3 |     100 |     100
+ modules/limites-por-canal   |     100 |      100 |     100 |     100
+ modules/registrar-deposito  |     100 |     93.9 |     100 |     100
+-----------------------------|---------|----------|---------|---------
+```
+
+Todo en el 80 % o por encima. Ramas sin cubrir nuevas, defensivas: `limpiarClaves.js:24` (llamada a `tarea()`
+con una limpieza ya en curso) y `reconciliacion.js:17` (`?? String(err)`).

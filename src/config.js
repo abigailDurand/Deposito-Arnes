@@ -78,6 +78,8 @@ function cargarConfig(env) {
       antiguedadMs: entero(env, 'RECONCILIACION_ANTIGUEDAD_MS', '10000'),
       alertaMs: entero(env, 'RECONCILIACION_ALERTA_MS', '3600000'),
     },
+    // CI-R11: tope del apagado limpio; menor que terminationGracePeriodSeconds (30 s) de Kubernetes.
+    apagadoTimeoutMs: entero(env, 'APAGADO_TIMEOUT_MS', '10000'),
     // PRY-R06 / UIF-R04: los umbrales son dinero; se entregan como string para usarlos con Decimal.
     uif: {
       umbralPEN: valor(env, 'UIF_UMBRAL_PEN', null),
