@@ -6,7 +6,7 @@ function aIso(fecha) {
   return (fecha instanceof Date ? fecha : new Date(fecha)).toISOString();
 }
 
-// DOM-R10: fila de depositos → objeto Deposito de SPEC-01 §5. No expone usuario_id ni *_acreditar.
+// DOM-R10: fila de depositos → objeto Deposito de SPEC-01 §5. No expone usuario_id, titular_id ni *_acreditar.
 // Sin `extensiones` la clave no aparece (lista liviana de HD-R08).
 function aJson(fila, extensiones) {
   const deposito = {

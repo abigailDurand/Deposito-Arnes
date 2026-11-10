@@ -1,0 +1,37 @@
+# Solo para el clúster local. El overlay local debe apuntar BILLETERA_USD_URL a http://billetera-usd-mock:4100.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: billetera-usd-mock
+  namespace: deposito
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: billetera-usd-mock
+  template:
+    metadata:
+      labels:
+        app: billetera-usd-mock
+    spec:
+      containers:
+        - name: mock
+          image: billetera-usd-mock:1.2.0
+          ports:
+            - containerPort: 4100
+          readinessProbe:
+            httpGet:
+              path: /health/live
+              port: 4100
+            periodSeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: billetera-usd-mock
+  namespace: deposito
+spec:
+  selector:
+    app: billetera-usd-mock
+  ports:
+    - port: 4100

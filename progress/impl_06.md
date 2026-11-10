@@ -121,3 +121,69 @@ tester. Se espera que vuelva a verde cuando el tester escriba PIP-T01..T10.
 - `docker compose up --build`: con el manifest real todas las features están `activo` y `src/modules/` aún no existe,
   así que `deposito-service` sale con `logger.fatal` (PIP-R09, comportamiento correcto) hasta SPEC-07..12.
   `GET /health` en compose solo se puede comprobar con un `MANIFEST_PATH` cuyas features estén `inactivo`.
+
+---
+
+## Retrabajo v1.2, 2026-11-09
+
+Cambio de spec (v1.1 → v1.2): §2/PIP-R12, `server.js` llama también a `reconciliacion.iniciar()` (SPEC-07). En el
+§4 (contexto), `titularId` en el depósito (DOM-R11) y, en una reconciliación, `usuario = { id: usuario_id, roles: [] }`
+con `cuenta = null`.
+
+### Archivos
+
+- [MODIFICADO] `src/server.js`: importa `./modules/registrar-deposito/reconciliacion` y llama a
+  `reconciliacion.iniciar()` después de `crearApp(...)` y `limpiarClaves.iniciar()`, antes de `listen(PORT)`.
+- Sin cambios: `src/core/pipeline.js`, `src/core/cargador.js`, `src/app.js` (ya cumplen el §4 nuevo).
+- No se tocó nada de `src/modules/registrar-deposito/` (incluido `reconciliacion.js`), ni pruebas, ni `specs-v2/`.
+
+### Reglas afectadas
+
+- **PIP-R12** · `crearApp` sigue sin iniciar tareas (`src/app.js` sin cambios). `server.js` inicia las dos tareas, y
+  lo hace después de `crearApp`. Así, si el manifest no es válido (PIP-R08/R09), la app no arranca y la
+  reconciliación no se programa. El temporizador hace `unref()` (lo hace el módulo de SPEC-07).
+- **§4 `deposito.titularId`** · El pipeline no arma el depósito: lo recibe del service y lo pasa tal cual por los huecos.
+  El service de SPEC-07 ya incluye `titularId` (`cuenta.titularId` al registrar, `fila.titular_id ?? null` al reintentar
+  o reconciliar). No hace falta ningún cambio en `pipeline.js`.
+- **§4 contexto en una reconciliación** · `contextoDe` en `pipeline.js` copia el contexto que recibe y le añade
+  `logger` y `privado`. El service de SPEC-07 (`cerrarReconciliado`) ya pasa `armarContexto({ id: fila.usuario_id,
+  roles: [] }, null, correlationId)`. Es decir, `usuario = { id: usuario_id, roles: [] }` y `cuenta = null`, como pide
+  la spec. Sin cambios.
+- **PRY-R04/R05** · `src/core/` no cambia. La referencia al módulo está en `src/server.js`, el punto de entrada (no es
+  `src/core/`), como pide el §2. Ningún módulo importa otro.
+- Las demás PIP-Rnn no cambian (ver las secciones anteriores).
+
+### Decisiones
+
+- La llamada es incondicional, como dice la spec (§2, PIP-R12): la spec no la hace depender de que
+  `registrar-deposito` esté `activo` en el manifest, así que no se añadió esa condición. Todas las extensiones
+  extienden `registrar-deposito`. Si el humano quiere que la reconciliación no arranque con la feature `inactivo`, la
+  spec tendría que decirlo.
+- Orden `limpiarClaves.iniciar()` → `reconciliacion.iniciar()`: el que da el texto de la spec.
+
+### Verificación
+
+- `node -e "require('./tests/setup/env.js'); require('./src/app'); require('./src/modules/registrar-deposito/reconciliacion')"`
+  → `carga ok`. Sin variables de entorno, `config.js` aborta por las obligatorias. Es el comportamiento esperado
+  (SPEC-00), no un fallo de carga.
+- `bash init.sh --rapido`:
+
+```
+[OK]    specs-v2/ intacto (15 archivos)
+[OK]    feature_list.json válido (13 features: pending=0 in_progress=1 done=8 blocked=0 reabierta=4)
+[OK]    SPEC-06: todos sus casos tienen prueba
+[WARN]  SPEC-07 (reabierta) aún sin prueba: RD-T19, RD-T20, RD-T21, RD-T22, RD-T23, RD-T24
+[WARN]  SPEC-08 (reabierta) aún sin prueba: CD-T14, CD-T15
+[WARN]  SPEC-11 (reabierta) aún sin prueba: CM-T09
+[OK]    Alcance de archivos correcto (190 archivos revisados)
+Test Suites: 1 failed, 11 passed, 12 total
+Tests:       11 failed, 230 passed, 241 total
+[FAIL]  Hay pruebas unitarias rotas
+```
+
+Los 11 fallos están en `tests/unit/registrar-deposito/service.test.js` y son las 11 pruebas unitarias de SPEC-07 que
+ya se sabía que estaban obsoletas: el mock de `acreditar` no devuelve `{ estado }`, y `repository.insertar` recibe
+ahora el parámetro `titular_id`. Son:
+RD-T03, RD-T11, RD-T12, RD-T13, RD-T18, RD-R03 (sin referencia), RD-R03/R05, RD-R04, RD-R08, RD-R09 y
+"repository (db simulada) insertar…". **No hay fallos nuevos**: `tests/core/pipeline.test.js` y
+`tests/core/cargador.test.js` pasan. No hay prueba que cubra `src/server.js` (PIP-R12 no tiene caso `PIP-Tnn` nuevo).

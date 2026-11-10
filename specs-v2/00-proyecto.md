@@ -9,7 +9,7 @@
 - **No hace:** guardar ni modificar saldos (son de billetera-service), ni entrar a la BD de otro servicio.
 - **Fuera de alcance:** sagas, broker de eventos, outbox, blockchain.
 - **Otros servicios:** billetera-service (cuentas y saldos), usuario-service (emite el JWT), pagos-service (sin relación).
-- **Versión spec:** 1.2
+- **Versión spec:** 1.3
 
 **Backend Stack:** Node.js 22 LTS, CommonJS (`require` / `module.exports`), Express 4.21.2, pg 8.13.1, decimal.js 10.4.3, zod 3.23.8, jsonwebtoken 9.0.2, axios 1.7.9, js-yaml 4.1.0, pino 9.5.0. PostgreSQL 16. Docker. (Contenedor `deposito-service`).
 
@@ -21,13 +21,13 @@ El Agente tiene permitido leer y modificar ÚNICAMENTE los siguientes archivos:
 
 - [NUEVO] `package.json` (Dependencias exactas de §1. Scripts: `start`, `test`, `test:unit`, `test:integration`).
 - [NUEVO] `Dockerfile` (`node:22-alpine`, usuario no root, `npm ci --omit=dev`. Copia `src/` y `specs-v2/manifest.yaml` conservando esa ruta, que es el valor por defecto de `MANIFEST_PATH`).
-- [NUEVO] `docker-compose.yml` (Servicios `db` = `postgres:16`, `deposito-service`, `billetera-mock` (SPEC-02). Monta `db/` en `/docker-entrypoint-initdb.d`. `deposito-service` espera el healthcheck de `db`).
+- [NUEVO] `docker-compose.yml` (Servicios `db` = `postgres:16`, `deposito-service`, `billetera-mock` (SPEC-02; atiende las rutas de ambas billeteras, y `deposito-service` recibe `BILLETERA_URL` y `BILLETERA_USD_URL` apuntando a él). Monta `db/` en `/docker-entrypoint-initdb.d`. `deposito-service` espera el healthcheck de `db`).
 - [NUEVO] `.env.example` · `.gitignore` (ignora `node_modules/`, `.env`, `.dev-keys/`, `tests/.tmp/`).
 - [NUEVO] `src/config.js` (Lee las variables de §5. Si falta una obligatoria, lanza error y el servicio no arranca).
 - [NUEVO] `src/core/logger.js` (pino; `redact` de `req.headers.authorization`; exporta `enmascararCuenta`).
 - [NUEVO] `jest.config.js` (Proyectos `unit` e `integration`; `globalSetup`; `setupFiles`; cobertura).
 - [NUEVO] `tests/setup/globalSetup.js` (Genera el par RSA de pruebas en `tests/.tmp/`. Si la BD de `DATABASE_URL_TEST` no existe, la crea conectándose a la BD `postgres` del mismo servidor. Luego ejecuta `DROP SCHEMA public CASCADE; CREATE SCHEMA public;` y aplica `db/*.sql` en orden alfabético, así cada corrida parte de cero).
-- [NUEVO] `tests/setup/env.js` (Asigna las variables de entorno de prueba antes de cargar `config.js`. `DATABASE_URL_TEST` toma el valor del entorno si existe; si no, `postgres://deposito:deposito@localhost:5432/deposito_test`, mismas credenciales que el servicio `db` de docker-compose. Asigna `UIF_UMBRAL_PEN=1000.00` y `UIF_UMBRAL_USD=300.00`: valores de prueba, no los de la normativa (SPEC-12)).
+- [NUEVO] `tests/setup/env.js` (Asigna las variables de entorno de prueba antes de cargar `config.js`. `DATABASE_URL_TEST` toma el valor del entorno si existe; si no, `postgres://deposito:deposito@localhost:5432/deposito_test`, mismas credenciales que el servicio `db` de docker-compose. Asigna también `BILLETERA_USD_URL` de prueba. Asigna `UIF_UMBRAL_PEN=1000.00` y `UIF_UMBRAL_USD=300.00`: valores de prueba, no los de la normativa (SPEC-12)).
 - [NUEVO] `tests/helpers/db.js` (Pool de pruebas y `limpiar()` con `TRUNCATE ... CASCADE` de todas las tablas, salvo `limites_canal`).
 - [NUEVO] `tests/core/proyecto.test.js` (PRY-T01 a PRY-T03).
 
@@ -83,7 +83,10 @@ Si otra spec contradice esta sección, gana esta sección y el agente lo reporta
 - `MANIFEST_PATH` (def. `specs-v2/manifest.yaml`).
 - `JWT_PUBLIC_KEY` (obligatoria; PEM, se aceptan `\n` escritos) · `JWT_ALGORITHMS` (def. `RS256`) · `JWT_ISSUER` (def. `usuario-service`) · `JWT_AUDIENCE` (def. `banco-api`).
 - `IDEMPOTENCIA_DIAS` (def. `7`).
-- `BILLETERA_URL` (obligatoria) · `BILLETERA_TOKEN` (obligatoria) · `BILLETERA_TIMEOUT_MS` (def. `5000`).
+- `BILLETERA_URL` (obligatoria) · `BILLETERA_TOKEN` (obligatoria) · `BILLETERA_TIMEOUT_MS` (def. `5000`, aplica a ambas billeteras). Billetera PEN (SPEC-02).
+- `BILLETERA_USD_URL` (obligatoria). Billetera USD (SPEC-02).
+- `BILLETERA_USD_TOKEN_URL` (opcional mientras dure la transición, Q7; URL real [POR ACORDAR], Q9) · `BILLETERA_USD_CLIENT_ID` y `BILLETERA_USD_CLIENT_SECRET` (obligatorias si hay `BILLETERA_USD_TOKEN_URL`; el secreto nunca en imágenes ni en el repositorio). Sustituyen a `BILLETERA_USD_TOKEN` (INT-R13).
+- `RECONCILIACION_INTERVALO_MS` (def. `30000`) · `RECONCILIACION_ANTIGUEDAD_MS` (def. `10000`) · `RECONCILIACION_ALERTA_MS` (def. `3600000`). Reconciliación de depósitos USD (RD-R13).
 - `UIF_UMBRAL_PEN` · `UIF_UMBRAL_USD` (opcionales; valor real [POR ACORDAR], SPEC-12).
 
 ## 6. Instrucciones de Ejecución para el Agente

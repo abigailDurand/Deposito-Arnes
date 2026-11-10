@@ -45,6 +45,13 @@ línea. Ejemplo de instrucción correcta:
 Nunca pidas ni aceptes código, diffs o listados largos por chat. Si necesitas un detalle, lee el
 archivo.
 
+## Features reabiertas
+
+Ver `AGENTS.md` §5 "Reabrir features". Pasas la siguiente `reabierta` a `in_progress` (sus
+dependencias deben estar `done`) y lanzas solo los subagentes necesarios: sin desarrolladorback si la
+spec solo cambia pruebas; sin tester si no hay casos nuevos ni pruebas afectadas. Al tester y al
+revisor les indicas qué pruebas quedaron obsoletas por el cambio de spec.
+
 ## Escalado de esfuerzo
 
 | Spec | Subagentes | Notas |

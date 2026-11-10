@@ -202,6 +202,7 @@ describe('requiereRol (SEG-R09)', () => {
 
 // SPEC-07 ya existe: ruta real con crearApp, PostgreSQL real y billetera con nock (extensiones inactivas).
 describe('SEG-T06 titular de la cuenta', () => {
+  // SPEC-02 §4 (v2.0): 0011-0123-000002 es ACTIVA PEN con titular usr-cliente-2.
   const CUENTA_AJENA = '0011-0123-000002';
   const MANIFEST = {
     version: 1,
@@ -219,7 +220,25 @@ describe('SEG-T06 titular de la cuenta', () => {
     nock.enableNetConnect(/127\.0\.0\.1|localhost/);
   });
 
-  afterEach(() => {
+  // AUD-R03: la auditoría se escribe en res.on('finish'), después de que supertest recibe la
+  // respuesta. Si el TRUNCATE de limpiar() (siguiente beforeEach) coincide con ese INSERT,
+  // PostgreSQL detecta un deadlock. Se espera a que el pool de la app quede sin consultas en curso
+  // y a que el conteo de auditoria_depositos sea estable (mismo patrón que registrar.test.js).
+  async function esperarAuditoria() {
+    const pausa = (ms) => new Promise((r) => { setTimeout(r, ms); });
+    const ocioso = () => poolApp.waitingCount === 0 && poolApp.totalCount === poolApp.idleCount;
+    let previo = -1;
+    let estables = 0;
+    for (let i = 0; i < 100 && estables < 2; i += 1) {
+      await pausa(25);
+      const { rows } = await pool.query('SELECT count(*)::int AS n FROM auditoria_depositos');
+      estables = ocioso() && rows[0].n === previo ? estables + 1 : 0;
+      previo = rows[0].n;
+    }
+  }
+
+  afterEach(async () => {
+    await esperarAuditoria();
     nock.abortPendingRequests();
     nock.cleanAll();
   });
@@ -230,7 +249,7 @@ describe('SEG-T06 titular de la cuenta', () => {
 
   test('SEG-T06 usr-cliente-1 deposita a 0011-0123-000002 → 403; billetera no recibe acreditación', async () => {
     const app = crearApp({ manifest: MANIFEST });
-    // La cuenta es USD y ACTIVA: si no fuera por el titular, el depósito pasaría.
+    // La cuenta es PEN y ACTIVA y la moneda coincide: si no fuera por el titular, el depósito pasaría.
     const consulta = billetera.cuentaActiva(CUENTA_AJENA);
     const credito = billetera.acreditaOk(CUENTA_AJENA);
 
@@ -239,7 +258,7 @@ describe('SEG-T06 titular de la cuenta', () => {
       .set(bearer(token('usr-cliente-1')))
       .set('Idempotency-Key', 'seg-t06-clave')
       .set('X-Correlation-Id', 'seg-t06')
-      .send({ cuentaDestino: CUENTA_AJENA, monto: '100.00', moneda: 'USD', canal: 'APP' });
+      .send({ cuentaDestino: CUENTA_AJENA, monto: '100.00', moneda: 'PEN', canal: 'APP' });
 
     expect(res.status).toBe(403);
     expect(res.body).toEqual({
@@ -282,6 +301,23 @@ describe('SEG-T06 titular de la cuenta', () => {
       if (auditadas.length === 0) await new Promise((r) => { setTimeout(r, 20); });
     }
     expect(auditadas).toEqual([{ resultado: 'EXITO' }]);
+  });
+
+  test('SEG-T06 control: usr-cliente-2 (titular) deposita por APP a 0011-0123-000002 → 201 y una acreditación', async () => {
+    const app = crearApp({ manifest: MANIFEST });
+    billetera.cuentaActiva(CUENTA_AJENA);
+    const credito = billetera.acreditaOk(CUENTA_AJENA);
+
+    const res = await request(app)
+      .post('/api/v1/depositos')
+      .set(bearer(token('usr-cliente-2')))
+      .set('Idempotency-Key', 'seg-t06-control-2')
+      .send({ cuentaDestino: CUENTA_AJENA, monto: '100.00', moneda: 'PEN', canal: 'APP' });
+
+    expect(res.status).toBe(201);
+    expect(res.body.estado).toBe('COMPLETADO');
+    expect(credito.peticiones).toHaveLength(1);
+    expect(credito.peticiones[0].body).toMatchObject({ monto: '100.00', moneda: 'PEN' });
   });
 });
 

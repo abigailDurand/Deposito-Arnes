@@ -9,7 +9,8 @@
       "pending",
       "in_progress",
       "done",
-      "blocked"
+      "blocked",
+      "reabierta"
     ]
   },
   "features": [
@@ -40,7 +41,7 @@
       "acceptance": [
         "Todo error del servicio sale con el mismo formato y un código del catálogo",
         "El objeto Deposito tiene la misma forma en todas las respuestas",
-        "DOM-T01 a DOM-T08 pasan"
+        "DOM-T01 a DOM-T09 pasan"
       ],
       "status": "done"
     },
@@ -148,11 +149,12 @@
         6
       ],
       "acceptance": [
-        "Un depósito válido queda COMPLETADO y billetera recibe una sola acreditación",
+        "Un depósito válido queda COMPLETADO, o en PROCESANDO (202) si Billetera USD lo deja pendiente, y billetera recibe una sola acreditación",
         "Un monto inválido no crea filas ni llama a billetera",
         "Si billetera falla, el depósito queda FALLIDO, el cliente recibe 502 y puede reintentar",
+        "Un depósito aceptado como pendiente termina en COMPLETADO o FALLIDO sin intervención del cliente (reconciliación RD-R13)",
         "Con todas las extensiones inactivas, el depósito funciona igual",
-        "RD-T01 a RD-T12 pasan; los test.todo de SEG, AUD e IDE que esperaban SPEC-07 pasan a pruebas reales"
+        "RD-T01 a RD-T24 pasan; el test.todo de RD-T18 vuelve a ser prueba real"
       ],
       "status": "done"
     },

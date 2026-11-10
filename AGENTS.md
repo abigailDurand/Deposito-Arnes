@@ -67,6 +67,16 @@ leader ──► desarrolladorback ──► tester ──► revisor ──► 
 Si el revisor responde RECHAZADO, el leader relanza a quien corresponda con la ruta del
 review. Máximo 2 vueltas; a la tercera, `blocked`.
 
+### Reabrir features (retrabajo tras un cambio de spec)
+
+Cuando el humano cambia la spec de una feature `done`, el leader la pasa a `reabierta` con
+`"retrabajo": true` en `feature_list.json`. `reabierta` cuenta como hecha para sus dependientes y
+sus casos sin prueba solo avisan. Se retrabajan en orden de dependencias, una a la vez:
+`reabierta → in_progress → done` (el revisor la marca `done`). Si la spec solo cambia pruebas, se
+omite desarrolladorback; si no añade casos `XX-Tnn` ni toca pruebas, se omite el tester. El tester
+de una feature reabierta **actualiza o elimina** las pruebas que quedaron obsoletas, no solo añade.
+Al cerrar todo el retrabajo, el leader quita el campo `retrabajo`.
+
 ## 6. Cierre de sesión
 
 1. `bash init.sh` — todo verde.

@@ -71,3 +71,32 @@ Tests:       152 passed, 152 total
 [OK]    Pruebas unitarias en verde (modo --rapido: integración NO ejecutada)
 [OK]    Entorno listo (verificación rápida).
 ```
+
+## Retrabajo v1.2, 2026-11-09
+
+Spec v1.1 → v1.2 (decisión D1: sin conversión hacia cuentas en dólares). Feature 11 ya estaba `in_progress` (`retrabajo: true`).
+
+### Archivos modificados (todos del §2)
+
+- `src/modules/conversion-moneda/index.js`: en `ejecutar`, tras CM-R01, si `contexto.cuenta.moneda === 'USD'` devuelve `deposito` sin cambios, antes de `buscarVigente` (CM-R11).
+- `db/11-conversion-moneda.sql`: el seed de ejemplo queda solo con USD→PEN 3.7500 (se quita PEN→USD 0.2600), igual que §4 v1.2.
+- `service.js` y `repository.js`: sin cambios. `service.js` solo tiene `convertir` (Decimal); la conversión PEN→USD estaba en `index.js`, no en `service.js`.
+
+### Reglas
+
+- CM-R01: igual que antes; USD→USD pasa por CM-R01 antes del corte de CM-R11.
+- CM-R02/CM-R03: sin cambios en el código; en la práctica solo se consulta USD→PEN (PEN→USD queda cortado por CM-R11).
+- CM-R04..CM-R10: sin cambios.
+- CM-R11: `index.js` devuelve el depósito sin cambios, no lanza y no consulta `tipos_cambio` cuando la cuenta es USD. No usa `/fx`. El 422 sale de `src/modules/registrar-deposito/service.js:129` (`deposito.monedaAcreditar !== cuenta.moneda` → `MONEDA_NO_SOPORTADA`; `monedaAcreditar` empieza en `datos.moneda`, línea 120). Lo comprobé sin tocarlo, así que no hay bloqueo.
+
+### Verificación
+
+- `node -e "require('./src/modules/conversion-moneda')"` → carga sin errores.
+- `bash init.sh --rapido` → ROJO: 1 prueba unitaria obsoleta falla (260/261). WARN: `SPEC-11 (en curso) aún sin prueba: CM-T09`.
+- `bash init.sh` completo → ROJO: 3 fallos, 486 pasan, 1 todo (490). Los 3 fallos son pruebas obsoletas por CM-R11, no regresiones.
+
+### Pruebas obsoletas (las corrige el `tester`)
+
+- `tests/unit/conversion-moneda/conversion.test.js`: `CM-R05 PEN → USD con 0.26 a la billetera 11111111-…: 150.00 PEN → 39.00 USD`. Espera que se consulte `tipos_cambio`, y ahora no se consulta.
+- `tests/integration/conversion-moneda/conversion.test.js`: `CM-R03 PEN → USD a la billetera 11111111-… usa la fila PEN→USD (0.26)…` y `CM-R09 PEN → USD y Billetera USD responde 500 → FALLIDO; la fila de conversión se queda`. Hay que reescribir CM-R09 con USD→PEN y añadir CM-T09.
+- `tests/integration/registrar-deposito/registrar.test.js:626`: `test.todo('RD-T14 … con conversion-moneda ACTIVA y tipo PEN→USD cargado → 422 …')`. Ya se puede implementar.

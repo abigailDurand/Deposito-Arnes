@@ -16,7 +16,8 @@ async function registrar(req, res) {
 
   // AUD-R06 / IDE-R08: aquí la fila del depósito ya existe (hay FK).
   res.locals.depositoId = deposito.id;
-  res.status(201).json(deposito);
+  // RD-R12: 202 si la acreditación sigue pendiente (PROCESANDO); si no, 201.
+  res.status(deposito.estado === 'PROCESANDO' ? 202 : 201).json(deposito);
 }
 
 module.exports = { registrar };

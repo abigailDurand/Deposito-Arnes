@@ -13,11 +13,15 @@ const { limpiar, cerrar, pool } = require('../../helpers/db');
 const { token } = require('../../helpers/tokens');
 const { registrarFixtures, activa } = require('../../core/fixtures/modulos');
 const registro = require('../../core/fixtures/registro');
+const config = require('../../../src/config');
 
 registrarFixtures(jest);
 
 const CUENTA = '0011-0123-456789';
-const CUENTA_USD = '0011-0123-000002';
+// SPEC-02 §4: 0011-0123-000002 es PEN de usr-cliente-2; las billeteras USD son UUID.
+const CUENTA_2 = '0011-0123-000002';
+const WALLET_USD = '11111111-1111-4111-8111-111111111111';
+const WALLET_USD_2 = '22222222-2222-4222-8222-222222222222';
 const BASE_MS = Date.parse('2026-10-13T19:20:00.000Z');
 const UN_MINUTO = 60 * 1000;
 
@@ -103,6 +107,25 @@ function elemento(n, extra = {}) {
   };
 }
 
+// Cualquier GET a una billetera (PEN o USD): para comprobar que no se consultó.
+function espia(url) {
+  const peticiones = [];
+  const scope = nock(url).persist().get(/.*/).reply(function respuesta(uri) {
+    peticiones.push(uri);
+    return [500, { mensaje: 'No debía llamarse.' }];
+  });
+  scope.peticiones = peticiones;
+  return scope;
+}
+
+function espiaPen() {
+  return espia(config.billetera.url);
+}
+
+function espiaUsd() {
+  return espia(config.billeteraUsd.url);
+}
+
 // La auditoría escribe después de responder: se reintenta hasta 1 s.
 async function filasAuditoria(esperadas) {
   let rows = [];
@@ -182,12 +205,14 @@ describe('SPEC-09 historial-depositos: casos', () => {
     expect(consulta.peticiones[0].headers['x-correlation-id']).toBe('hd-t01');
   });
 
-  test('HD-T02 cuenta propia sin depósitos → datos: [], total: 0', async () => {
+  test('HD-T02 cuenta propia sin depósitos (usr-cliente-2, 22222222-2222-4222-8222-'
+    + '222222222222) → datos: [], total: 0', async () => {
     const app = crearApp({ manifest: manifest() });
     await insertarVarios(1, 3);
-    const consulta = billetera.cuentaActiva(CUENTA_USD);
+    await insertarDeposito(4, { cuenta: WALLET_USD, moneda: 'USD' });
+    const consulta = billetera.billeteraUsdExiste(WALLET_USD_2);
 
-    const res = await get(app, CUENTA_USD, { usuario: 'usr-cliente-2' });
+    const res = await get(app, WALLET_USD_2, { usuario: 'usr-cliente-2' });
 
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ datos: [], pagina: 1, tamano: 20, total: 0 });
@@ -407,7 +432,7 @@ describe('SPEC-09 historial-depositos: reglas', () => {
     await insertarDeposito(1, { usuario: 'usr-cajero-1', canal: 'VENTANILLA' });
     await insertarDeposito(2, { usuario: 'usr-agente-1' });
     await insertarDeposito(3, {
-      usuario: 'usr-cajero-1', canal: 'VENTANILLA', cuenta: CUENTA_USD, moneda: 'USD',
+      usuario: 'usr-cajero-1', canal: 'VENTANILLA', cuenta: WALLET_USD, moneda: 'USD',
     });
     const consulta = billetera.cuentaActiva(CUENTA);
 
@@ -433,16 +458,16 @@ describe('SPEC-09 historial-depositos: reglas', () => {
     const app = crearApp({ manifest: manifest() });
     await insertarDeposito(1, { usuario: 'usr-agente-2' });
     await insertarDeposito(2, {
-      usuario: 'usr-cajero-1', canal: 'VENTANILLA', cuenta: CUENTA_USD, moneda: 'USD',
+      usuario: 'usr-cajero-1', canal: 'VENTANILLA', cuenta: CUENTA_2,
     });
-    billetera.cuentaActiva(CUENTA_USD);
+    billetera.cuentaActiva(CUENTA_2);
 
-    const res = await get(app, CUENTA_USD, { usuario: 'usr-cliente-2' });
+    const res = await get(app, CUENTA_2, { usuario: 'usr-cliente-2' });
 
     expect(res.status).toBe(200);
     expect(res.body.total).toBe(1);
     expect(res.body.datos).toEqual([elemento(2, {
-      canal: 'VENTANILLA', cuentaDestino: CUENTA_USD, moneda: 'USD',
+      canal: 'VENTANILLA', cuentaDestino: CUENTA_2,
     })]);
   });
 
@@ -616,5 +641,120 @@ describe('SPEC-09 auditoría del listado (AUD-R06)', () => {
       resultado: 'ERROR_403',
       correlation_id: 'hd-aud-403',
     });
+  });
+});
+
+describe('SPEC-09 Billetera USD (HD-T09..HD-T12)', () => {
+  function elementoUsd(n, extra = {}) {
+    return elemento(n, { cuentaDestino: WALLET_USD, moneda: 'USD', ...extra });
+  }
+
+  test('HD-T09 usr-cliente-1, historial de 11111111-1111-4111-8111-111111111111 con 2 '
+    + 'depósitos → 200, 2 elementos; se consultó Billetera USD y no la PEN', async () => {
+    const app = crearApp({ manifest: manifest() });
+    await insertarDeposito(1, { cuenta: WALLET_USD, moneda: 'USD' });
+    await insertarDeposito(2, { cuenta: WALLET_USD, moneda: 'USD', usuario: 'usr-cajero-1' });
+    await insertarDeposito(3);
+    const usd = billetera.billeteraUsdExiste(WALLET_USD);
+    const pen = espiaPen();
+
+    const res = await get(app, WALLET_USD, { correlation: 'hd-t09' });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({
+      datos: [elementoUsd(2), elementoUsd(1)],
+      pagina: 1,
+      tamano: 20,
+      total: 2,
+    });
+    for (const e of res.body.datos) expect(e).not.toHaveProperty('extensiones');
+    expect(usd.peticiones).toHaveLength(1);
+    expect(usd.peticiones[0].headers['x-correlation-id']).toBe('hd-t09');
+    expect(pen.peticiones).toHaveLength(0);
+  });
+
+  test('HD-T10 usr-cliente-2 pide 11111111-1111-4111-8111-111111111111 → 403 SIN_PERMISO',
+    async () => {
+      const app = crearApp({ manifest: manifest() });
+      await insertarDeposito(1, { cuenta: WALLET_USD, moneda: 'USD' });
+      const usd = billetera.billeteraUsdExiste(WALLET_USD);
+      const pen = espiaPen();
+      const listar = jest.spyOn(repository, 'listar');
+
+      const res = await get(app, WALLET_USD, { usuario: 'usr-cliente-2' });
+
+      esError(res, 403, 'SIN_PERMISO');
+      expect(res.body.mensaje).toBe('El rol o la cuenta no permiten la operación.');
+      expect(usd.peticiones).toHaveLength(1);
+      expect(pen.peticiones).toHaveLength(0);
+      expect(listar).not.toHaveBeenCalled();
+    });
+
+  test('HD-T11 numero UUID en mayúsculas o incompleto → 400 FORMATO_INVALIDO; '
+    + 'billetera no llamada', async () => {
+    const app = crearApp({ manifest: manifest() });
+    await insertarDeposito(1, { cuenta: WALLET_USD, moneda: 'USD' });
+    const usd = espiaUsd();
+    const pen = espiaPen();
+    const listar = jest.spyOn(repository, 'listar');
+    const numeros = [
+      // 11111111-… solo tiene dígitos: en mayúsculas no cambia. Se usa el UUID del ejemplo de
+      // SPEC-02 §4 (3fa85f64-…) en mayúsculas.
+      '3FA85F64-5717-4562-B3FC-2C963F66AFA6',
+      '11111111-1111-4111-8111-11111111111A',
+      '11111111-1111-4111-8111',
+      '11111111-1111-4111-8111-11111111111',
+      '111111111111411181111111111111111111',
+    ];
+
+    for (const numero of numeros) {
+      const res = await get(app, numero);
+      esError(res, 400, 'FORMATO_INVALIDO');
+    }
+    expect(usd.peticiones).toHaveLength(0);
+    expect(pen.peticiones).toHaveLength(0);
+    expect(listar).not.toHaveBeenCalled();
+  });
+
+  test('HD-T12 Billetera USD 500 al verificar titular → 502 BILLETERA_NO_DISPONIBLE',
+    async () => {
+      const app = crearApp({ manifest: manifest() });
+      await insertarDeposito(1, { cuenta: WALLET_USD, moneda: 'USD' });
+      const usd = billetera.consultaUsdFalla(WALLET_USD, { status: 500 });
+      const pen = espiaPen();
+      const listar = jest.spyOn(repository, 'listar');
+
+      const res = await get(app, WALLET_USD);
+
+      esError(res, 502, 'BILLETERA_NO_DISPONIBLE');
+      expect(usd.peticiones).toHaveLength(1);
+      expect(pen.peticiones).toHaveLength(0);
+      expect(listar).not.toHaveBeenCalled();
+    });
+
+  test('HD-R04 usr-agente-1 en billetera USD → solo los suyos; ninguna billetera llamada',
+    async () => {
+      const app = crearApp({ manifest: manifest() });
+      await insertarDeposito(1, { cuenta: WALLET_USD, moneda: 'USD' });
+      await insertarDeposito(2, { cuenta: WALLET_USD, moneda: 'USD', usuario: 'usr-agente-2' });
+      const usd = espiaUsd();
+      const pen = espiaPen();
+
+      const res = await get(app, WALLET_USD, { usuario: 'usr-agente-1' });
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ datos: [elementoUsd(1)], pagina: 1, tamano: 20, total: 1 });
+      expect(usd.peticiones).toHaveLength(0);
+      expect(pen.peticiones).toHaveLength(0);
+    });
+
+  test('HD-R05 Billetera USD 404 (null) → 403 SIN_PERMISO', async () => {
+    const app = crearApp({ manifest: manifest() });
+    const usd = billetera.billeteraUsdNoExiste(WALLET_USD);
+
+    const res = await get(app, WALLET_USD);
+
+    esError(res, 403, 'SIN_PERMISO');
+    expect(usd.peticiones).toHaveLength(1);
   });
 });

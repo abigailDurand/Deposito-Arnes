@@ -98,4 +98,47 @@ describe('enTransaccion', () => {
       extensiones: {},
     });
   });
+
+  test('DOM-R11 columna titular_id existe, VARCHAR(100), nullable y sin FK', async () => {
+    const { rows } = await poolPrueba.query(
+      `SELECT data_type, character_maximum_length, is_nullable
+         FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'depositos' AND column_name = 'titular_id'`,
+    );
+    expect(rows).toEqual([
+      { data_type: 'character varying', character_maximum_length: 100, is_nullable: 'YES' },
+    ]);
+
+    const { rows: fks } = await poolPrueba.query(
+      `SELECT tc.constraint_name
+         FROM information_schema.table_constraints tc
+         JOIN information_schema.key_column_usage kcu
+           ON kcu.constraint_name = tc.constraint_name AND kcu.table_schema = tc.table_schema
+        WHERE tc.table_schema = 'public' AND tc.table_name = 'depositos'
+          AND tc.constraint_type = 'FOREIGN KEY' AND kcu.column_name = 'titular_id'`,
+    );
+    expect(fks).toEqual([]);
+  });
+
+  test('DOM-R11 INSERT sin titular_id → NULL; con titular_id → se guarda y aJson no lo expone', async () => {
+    await poolPrueba.query(INSERTAR, valores(ID_1));
+    await poolPrueba.query(
+      `INSERT INTO depositos
+        (id, cuenta_destino, monto, moneda, monto_acreditar, moneda_acreditar, canal, referencia, estado, usuario_id, titular_id)
+        VALUES ($1, $2, '150.00', 'USD', '150.00', 'USD', 'AGENTE', NULL, 'PROCESANDO', 'usr-agente-1', $3)`,
+      [ID_2, '11111111-1111-4111-8111-111111111111', 'usr-cliente-1'],
+    );
+
+    const { rows } = await poolPrueba.query('SELECT id, titular_id FROM depositos ORDER BY id');
+    expect(rows).toEqual([
+      { id: ID_1, titular_id: null },
+      { id: ID_2, titular_id: 'usr-cliente-1' },
+    ]);
+
+    const { rows: [conTitular] } = await poolPrueba.query('SELECT * FROM depositos WHERE id = $1', [ID_2]);
+    const json = aJson(conTitular, {});
+    expect(json).not.toHaveProperty('titular_id');
+    expect(json).not.toHaveProperty('titularId');
+    expect(JSON.stringify(json)).not.toContain('usr-cliente-1');
+  });
 });

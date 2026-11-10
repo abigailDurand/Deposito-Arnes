@@ -5,13 +5,15 @@ const request = require('supertest');
 
 const { crearApp } = require('../../../src/app');
 const { pool: poolApp } = require('../../../src/core/db');
+const repositorio = require('../../../src/modules/conversion-moneda/repository');
 const billetera = require('../../helpers/billetera');
 const { limpiar, cerrar, pool } = require('../../helpers/db');
 const { token } = require('../../helpers/tokens');
 
 const RUTA = '/api/v1/depositos';
 const CUENTA = '0011-0123-456789';
-const CUENTA_USD = '0011-0123-000002';
+// SPEC-02 §4 v2.0: la cuenta en dólares es la billetera USD de usr-cliente-1 (Billetera USD).
+const WALLET_USD = '11111111-1111-4111-8111-111111111111';
 const BODY = { cuentaDestino: CUENTA, monto: '100.00', moneda: 'USD', canal: 'APP' };
 const TIPO_1 = '00000000-0000-0000-0000-000000000001';
 const TIPO_2 = '00000000-0000-0000-0000-000000000002';
@@ -256,29 +258,100 @@ describe('SPEC-11 conversion-moneda: casos', () => {
       monto_final: '375.00',
     }]);
   });
-});
 
-describe('SPEC-11 conversion-moneda: reglas con la BD real', () => {
-  test('CM-R03 PEN → USD usa la fila PEN→USD (0.26), no la inversa de USD→PEN', async () => {
+  test('CM-T09 100.00 PEN a 11111111-… (USD) con tipo PEN→USD cargado y feature activa → 422 '
+    + 'MONEDA_NO_SOPORTADA; sin fila; sin acreditación; no consulta tipos_cambio (CM-R11)',
+  async () => {
     const app = crearApp({ manifest: manifest() });
-    await cargarTipo({ id: TIPO_1, valor: '3.7500', desplazamiento: '-1 day' });
     await cargarTipo({
       id: TIPO_2, origen: 'PEN', destino: 'USD', valor: '0.2600', desplazamiento: '-1 day',
     });
-    billetera.cuentaActiva(CUENTA_USD);
-    const credito = billetera.acreditaOk(CUENTA_USD);
-    const body = { cuentaDestino: CUENTA_USD, monto: '100.00', moneda: 'PEN', canal: 'APP' };
+    const buscarVigente = jest.spyOn(repositorio, 'buscarVigente');
+    const consulta = billetera.billeteraUsdExiste(WALLET_USD);
+    const credito = billetera.acreditaUsdOk();
+    const creditoPen = billetera.acreditaOk(CUENTA);
 
-    const res = await post(app, { body, usuario: 'usr-cliente-2' });
-
-    expect(res.status).toBe(201);
-    expect(res.body.extensiones).toEqual({
-      'conversion-moneda': { monedaCuenta: 'USD', tipoCambio: '0.2600', montoAcreditado: '26.00' },
+    const res = await post(app, {
+      body: { cuentaDestino: WALLET_USD, monto: '100.00', moneda: 'PEN', canal: 'APP' },
+      correlation: 'cm-t09',
     });
-    expect(credito.peticiones[0].body).toMatchObject({ monto: '26.00', moneda: 'USD' });
-    expect(await conversiones()).toEqual([
-      expect.objectContaining({ tipo_cambio_id: TIPO_2, monto_final: '26.00' }),
-    ]);
+
+    esError(res, 422, 'MONEDA_NO_SOPORTADA');
+    expect(res.headers['x-correlation-id']).toBe('cm-t09');
+    expect(consulta.peticiones).toHaveLength(1);
+    expect(credito.peticiones).toHaveLength(0);
+    expect(creditoPen.peticiones).toHaveLength(0);
+    expect(buscarVigente).not.toHaveBeenCalled();
+    expect(await depositos()).toEqual([]);
+    expect(await conversiones()).toEqual([]);
+  });
+});
+
+describe('SPEC-11 conversion-moneda: reglas con la BD real', () => {
+  // SPEC-02 v2.0: la cuenta USD es la billetera 11111111-… (usr-cliente-1), atendida por
+  // Billetera USD. SPEC-11 v1.2 (D1, CM-R11): hacia ella no hay conversión.
+  const BODY_PEN_A_USD = { cuentaDestino: WALLET_USD, monto: '150.00', moneda: 'PEN', canal: 'APP' };
+
+  test('CM-R11 solo hay fila USD→PEN y el depósito es PEN a la billetera USD → 422 (no invierte ni convierte)',
+    async () => {
+      const app = crearApp({ manifest: manifest() });
+      await cargarTipo({ id: TIPO_1, valor: '3.7500', desplazamiento: '-1 day' });
+      billetera.billeteraUsdExiste(WALLET_USD);
+      const credito = billetera.acreditaUsdOk();
+
+      const res = await post(app, { body: BODY_PEN_A_USD });
+
+      esError(res, 422, 'MONEDA_NO_SOPORTADA');
+      expect(credito.peticiones).toHaveLength(0);
+      expect(await depositos()).toEqual([]);
+      expect(await conversiones()).toEqual([]);
+    });
+
+  test('CM-R09 USD → PEN y la billetera responde 500 → FALLIDO; la fila de conversión se queda '
+    + 'y el detalle del depósito FALLIDO trae la extensión', async () => {
+    const app = crearApp({ manifest: manifest() });
+    await cargarTipo({ id: TIPO_1, valor: '3.7500', desplazamiento: '-1 day' });
+    billetera.cuentaActiva(CUENTA);
+    const credito = billetera.acreditaFalla(CUENTA, { status: 500 });
+
+    const res = await post(app, { correlation: 'cm-r09' });
+
+    esError(res, 502, 'BILLETERA_NO_DISPONIBLE');
+    expect(credito.peticiones).toHaveLength(1);
+    expect(credito.peticiones[0].body).toMatchObject({ monto: '375.00', moneda: 'PEN' });
+    const filas = await depositos();
+    expect(filas).toEqual([expect.objectContaining({
+      estado: 'FALLIDO', monto_acreditar: '375.00', moneda_acreditar: 'PEN',
+    })]);
+    expect(await conversiones()).toEqual([expect.objectContaining({
+      deposito_id: filas[0].id, tipo_cambio_id: TIPO_1, monto_final: '375.00',
+    })]);
+
+    billetera.cuentaActiva(CUENTA);
+    const detalle = await request(app)
+      .get(`${RUTA}/${filas[0].id}`)
+      .set('Authorization', `Bearer ${token('usr-cliente-1')}`);
+
+    expect(detalle.status).toBe(200);
+    expect(detalle.body).toMatchObject({ id: filas[0].id, estado: 'FALLIDO' });
+    expect(detalle.body.extensiones).toEqual({ 'conversion-moneda': EXTENSION_375 });
+  });
+
+  test('CM-T07 (PEN → USD) feature inactivo, PEN a la billetera USD con tipo cargado → 422 '
+    + 'MONEDA_NO_SOPORTADA', async () => {
+    const app = crearApp({ manifest: manifest({ conversion: 'inactivo' }) });
+    await cargarTipo({
+      id: TIPO_2, origen: 'PEN', destino: 'USD', valor: '0.2600', desplazamiento: '-1 day',
+    });
+    billetera.billeteraUsdExiste(WALLET_USD);
+    const credito = billetera.acreditaUsdOk();
+
+    const res = await post(app, { body: BODY_PEN_A_USD });
+
+    esError(res, 422, 'MONEDA_NO_SOPORTADA');
+    expect(credito.peticiones).toHaveLength(0);
+    expect(await depositos()).toEqual([]);
+    expect(await conversiones()).toEqual([]);
   });
 
   test('CM-R03 solo hay fila PEN→USD y el depósito es USD a cuenta PEN → 422 (no invierte)',
@@ -287,12 +360,16 @@ describe('SPEC-11 conversion-moneda: reglas con la BD real', () => {
       await cargarTipo({
         id: TIPO_2, origen: 'PEN', destino: 'USD', valor: '0.2600', desplazamiento: '-1 day',
       });
+      const buscarVigente = jest.spyOn(repositorio, 'buscarVigente');
       billetera.cuentaActiva(CUENTA);
       billetera.acreditaOk(CUENTA);
 
       const res = await post(app);
 
       esError(res, 422, 'MONEDA_NO_SOPORTADA');
+      // Control del espía de CM-T09: hacia cuentas PEN sí se consulta el par USD→PEN.
+      expect(buscarVigente).toHaveBeenCalledTimes(1);
+      expect(buscarVigente.mock.calls[0].slice(1)).toEqual(['USD', 'PEN']);
       expect(await depositos()).toEqual([]);
     });
 

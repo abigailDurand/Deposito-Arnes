@@ -96,3 +96,70 @@ Tests:       12 todo, 177 passed, 189 total
 [OK]    Todas las pruebas en verde (unitarias + integración)
 [OK]    Entorno listo. Puedes empezar a trabajar.
 ```
+
+---
+
+## Retrabajo v1.2, 2026-11-09
+
+**Veredicto:** APROBADO
+
+Alcance: solo lo de SPEC-06 v1.2 (PIP-R12 y §4). El código de `src/modules/registrar-deposito/` (incluido
+`reconciliacion.js`) es de SPEC-07 y no se aprueba ni se rechaza aquí.
+
+### Reglas
+- [x] PIP-R12 — `src/server.js:12` importa `./modules/registrar-deposito/reconciliacion`; `src/server.js:22-26` llama a
+  `crearApp` → `limpiarClaves.iniciar()` → `reconciliacion.iniciar()` → `listen(PORT)`, el orden del texto de §2.
+  `src/app.js` no cambió desde `016a2cc` y no inicia tareas; `tests/core/cargador.test.js:234-244` lo comprueba para
+  las dos tareas (espía `limpiarClaves.iniciar` y `reconciliacion.iniciar`).
+- [x] §4 `deposito.titularId` — `src/core/pipeline.js` no construye el depósito, lo pasa tal cual; sin cambios
+  necesarios. `tests/core/pipeline.test.js` (`nuevoDeposito()`) ya incluye `titularId`.
+- [x] §4 contexto de reconciliación — `src/core/pipeline.js:51-57` (`contextoDe`) hace `...contexto` y solo añade
+  `logger`/`privado`, así que `usuario = { id, roles: [] }` y `cuenta = null` llegan intactos a los módulos.
+- [x] PIP-R01..R11 — `pipeline.js`, `cargador.js` y `app.js` sin cambios (`git diff HEAD` vacío; último commit
+  `016a2cc`). Siguen valiendo las verificaciones de la revisión anterior.
+- [x] PRY-R05 — `src/core/` no cambió en este retrabajo. Grep de nombres de feature
+  (`registrar-deposito|consultar-deposito|historial|conversion|alerta-uif|reconciliacion|comision`) en `src/core/`:
+  0 coincidencias. Los cambios pendientes en `src/core/clients/billeteraClient.js` y `src/core/depositoMapper.js` son
+  de SPEC-02/SPEC-01 (ya revisados en `review_02.md` / `review_01.md`), no de este retrabajo.
+- [x] PRY-R04 — la referencia a un módulo está en `src/server.js` (punto de entrada, declarado en §2 de SPEC-06),
+  no en `src/core/` ni en otro módulo.
+- [x] PRY-R06/R08/R09/R10 — `src/server.js` no maneja dinero, SQL, secretos ni URLs; grep de `Number(`,
+  `parseFloat`, `console.log`, `http://` en `server.js`, `app.js`, `pipeline.js`, `cargador.js`: 0 coincidencias.
+- [x] PRY-R12 — `specs-v2/` intacto (hash OK).
+
+### Decisión del dev: `reconciliacion.iniciar()` incondicional
+**Correcta según la spec, no es una suposición.** §2 y PIP-R12 dicen sin condición que `server.js` llama a
+`reconciliacion.iniciar()`; PIP-R08 restringe solo lo que `cargar(manifest)` hace `require`, no a `server.js`.
+Añadir una condición sobre el manifest sí habría sido inventar comportamiento.
+Observación para el humano (no bloquea, no incumple regla): con `registrar-deposito` `inactivo`, el proceso sigue
+cargando `registrar-deposito/service.js` y la reconciliación sigue cerrando depósitos `PROCESANDO` contra la
+billetera aunque no se puedan crear nuevos. Si eso no se desea, debe decirlo la spec (06 PIP-R12 o 07 RD-R13).
+
+### Casos de prueba
+- [x] PIP-T01..PIP-T10 (10/10 reales, sin cambios; `init.sh`: "SPEC-06: todos sus casos tienen prueba").
+- [x] PIP-R12 (parte `crearApp`): `tests/core/cargador.test.js:234`, aserciones concretas `not.toHaveBeenCalled()`.
+- Observación: `src/server.js` no tiene prueba directa (la spec no define un PIP-Tnn para él). Revisado a mano,
+  `src/server.js:21-30`. No es un caso `XX-Tnn` exigido.
+
+### Checkpoints
+- C1: [x]  C2: [x] (1 `in_progress`; `current.md` describe la sesión)  C3: [x]  C4: [x]  C5: [x]
+  (cobertura `src/core/` y `src/modules/` ≥ 80 %; `pipeline.js` 100 % stmts / 82.14 % branches;
+  `modules/registrar-deposito` 100 % / 93.75 %; integración contra PostgreSQL real).
+
+### Cambios requeridos
+Ninguno.
+
+### Salida de `bash init.sh` (completo, PostgreSQL real)
+```
+[OK]    specs-v2/ intacto (15 archivos)
+[OK]    feature_list.json válido (13 features: pending=0 in_progress=1 done=8 blocked=0 reabierta=4)
+[OK]    SPEC-06: todos sus casos tienen prueba
+[OK]    SPEC-07: todos sus casos tienen prueba
+[WARN]  SPEC-08 (reabierta) aún sin prueba: CD-T14, CD-T15
+[WARN]  SPEC-11 (reabierta) aún sin prueba: CM-T09
+[OK]    Alcance de archivos correcto (190 archivos revisados)
+Test Suites: 23 passed, 23 total
+Tests:       1 todo, 484 passed, 485 total
+[OK]    Todas las pruebas en verde (unitarias + integración)
+[OK]    Entorno listo. Puedes empezar a trabajar.
+```

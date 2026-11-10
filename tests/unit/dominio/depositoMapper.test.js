@@ -52,6 +52,26 @@ describe('aJson', () => {
     expect(JSON.stringify(json)).not.toContain('usr-agente-1');
   });
 
+  test('DOM-T09 aJson con titular_id → la respuesta no lo contiene', () => {
+    const json = aJson(fila({ titular_id: 'usr-cliente-1' }), {});
+
+    expect(json).not.toHaveProperty('titular_id');
+    expect(json).not.toHaveProperty('titularId');
+    expect(JSON.stringify(json)).not.toContain('usr-cliente-1');
+    expect(json).toEqual({
+      id: '7f1c2e9a-0b1d-4c5e-9f00-123456789abc',
+      cuentaDestino: '0011-0123-456789',
+      monto: '150.00',
+      moneda: 'PEN',
+      canal: 'AGENTE',
+      referencia: 'Pago alquiler',
+      estado: 'COMPLETADO',
+      creadoEn: '2026-10-13T19:20:00.000Z',
+      actualizadoEn: '2026-10-13T19:20:01.000Z',
+      extensiones: {},
+    });
+  });
+
   test('DOM-R10 monto con valores límite → string con exactamente 2 decimales', () => {
     expect(aJson(fila({ monto: '0.01' }), {}).monto).toBe('0.01');
     expect(aJson(fila({ monto: '10.5' }), {}).monto).toBe('10.50');

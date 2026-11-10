@@ -224,3 +224,82 @@
 4. CM-R02: confirmar "vigente" con `now()` de la BD. (SPEC-11)
 5. UIF-R04: validación de umbrales no numéricos. (SPEC-12)
 6. Commits de SPEC-09..12 pendientes (no se hicieron en esta sesión).
+
+## 2026-11-02/03 — Retrabajo: integración con Billetera USD (rama `inte_biUsd`)
+- **Origen:** el humano aprobó SPEC-02 v2.0 (billetera PEN propuesta + Billetera USD, contrato
+  `docs/referencia/Billetera_USD_openapi.yaml` v1.1.0) y los cambios en 00, 01, 07, 08, 09. Nuevo estado
+  `reabierta` + campo `retrabajo` en el arnés (AGENTS.md §5).
+- **Ramas:** `main` se reseteó a `fba344d` (pre-USD) por orden del humano. El trabajo de un compañero
+  (`codigo/`, fuera del alcance de init.sh, 28/374 pruebas rojas) quedó en la rama `Busti`; se usó como
+  referencia descartando sus defectos (`armarContexto` sin logger/db, `montoValido` con `decimalPlaces()`,
+  regex UUID con `/i`).
+- **Features y commits:**
+  | Spec | Agentes | Commit |
+  |---|---|---|
+  | 00 config `BILLETERA_USD_*` | dev → tester → revisor | `12f2b19`, `36fc622` |
+  | 01 `cuenta_destino VARCHAR(36)` | dev → revisor | `a70dd04` |
+  | 02 billeteras PEN/USD, enrutamiento, mock, INT-T08..T15 | dev → tester → revisor ✗ → tester → revisor | `fc01ac7` |
+  | 03 solo pruebas (datos v2.0) | tester → revisor | `58d8e0a` |
+  | 07 RD-R02/R08/R11, RD-T13..T18 | dev → tester → revisor | `c3af846` |
+  | 08 CD-T10..T13 | tester → revisor | `e4f8fac` |
+  | 09 HD-R01, HD-T09..T12 | dev → tester → revisor | `fc9430f` |
+  | 11 solo pruebas; CM-R03 PEN→USD de `todo` a real | tester → revisor | `7539b67` |
+  | 12 solo pruebas | tester → revisor | `cec77a2` |
+- **Rechazo único:** SPEC-02 por un deadlock preexistente en `registrar.test.js` (auditoría `res.on('finish')`
+  vs `TRUNCATE`); corregido esperando la auditoría antes de limpiar.
+- **Verificación final:** `bash init.sh` (leader) 409/409, 0 todo; 13 features `done`; campo `retrabajo` retirado.
+- **Pendientes de decisión humana (Billetera USD, `[POR ACORDAR]` de SPEC-02):**
+  1. ¿`POST /api/v1/depositos/usd` deja el depósito `COMPLETADO` en la misma petición? (hoy otro estado → 502).
+  2. Mapeo `metodo_origen` por canal (VENTANILLA/AGENTE → EFECTIVO, APP → TRANSFERENCIA).
+  3. Billetera USD no expone estado: hoy toda billetera existente se trata como `ACTIVA`.
+  4. Autenticación entre servicios (`BILLETERA_USD_TOKEN` opcional).
+- **Arrastrar:** el mock `billetera-mock` con rutas USD no se probó levantado con docker (solo por lectura y nock).
+  Un revisor borró `node_modules` al quitar un worktree con unión; se restauró con `npm ci`. No usar uniones.
+
+## 2026-11-06/09 — Retrabajo: Billetera USD v1.2.0 (rama `inte_biUsd`)
+- **Origen:** contrato `docs/referencia/Billetera_USD_openapi_v1.2.0.yaml` (OAuth, `Wallet.estado`, 202 VALIDADO, 422 de
+  negocio, `canal`). Propuesta `docs/propuesta-billetera-usd-v1.2.md`; D1, D2, D3 aprobadas; Q2, Q3, Q13 (`POST
+  /depositos/usd` abona la billetera) y Q14 (cuenta USD = billetera del cliente, sin `cuenta_destino_id`) resueltas por
+  el humano. El humano promovió `docs/specs-propuestas/` a `specs-v2/` y regeneró el hash.
+- **Corrección de spec en curso:** contradicción RD-T22 vs INT-R05/RD-R13 (replay FALLIDO en la reconciliación).
+  Decisión humana: nuevo resultado `RECHAZADO` (02 v2.2, 07 v2.2). En la misma edición: transición Q7 = sin
+  `BILLETERA_USD_TOKEN_URL`; un 401 descarta el token OAuth guardado, un 403 no.
+- **Features (todas dev → tester → revisor salvo indicación):**
+  | Spec | Versión | Veredicto | Notas |
+  |---|---|---|---|
+  | 00 | 1.3 | APROBADO | OAuth USD y `RECONCILIACION_*` en config |
+  | 01 | 1.2 | APROBADO | `titular_id`, DOM-T09 |
+  | 02 | 2.1 → 2.2 | APROBADO (2 pasadas) | OAuth, estados, `ACREDITADO/PENDIENTE/RECHAZADO`, mock v1.2.0, INT-T15..T19 |
+  | 06 | 1.2 | APROBADO | `server.js` arranca `reconciliacion.iniciar()` |
+  | 07 | 2.2 | APROBADO CON OBS. | 202, 422 `CUENTA_INACTIVA`, reconciliación RD-R13, RD-T19..T24 |
+  | 08 | 1.3 | APROBADO | sin cambios de código; CD-T14, CD-T15 |
+  | 11 | 1.2 | APROBADO | D1: sin conversión hacia USD; CM-T09 |
+  | 12 | 1.3 | APROBADO | sin dev (UIF-R01 lo cumple el pipeline); pruebas con reconciliación |
+- **Incidencias de orden:** el leader adelantó 07 antes que 06 y `.harness/validar-features.js` lo rechazó (una
+  `in_progress` exige dependencias `done`; `reabierta` solo vale para dependientes ya `done`). Por decisión del humano
+  se hizo 06 primero; el tester de 07 se adelantó porque la cobertura de ramas (75 %) no dejaba cerrar 06. Ajustes
+  transitorios en `registrar-deposito/service.js` y pruebas de 07/11 durante 02, ya sustituidos.
+- **Verificación final:** `bash init.sh` (leader) 494/494, 0 todo; 13 features `done`; campo `retrabajo` retirado.
+  Sin commits en esta sesión (cambios de `specs-v2/`, código y pruebas sin commitear en `inte_biUsd`).
+- **Pendientes de decisión humana / arrastrar:**
+  1. ~~Deadlock intermitente en `TRUNCATE` de `limpiar()`.~~ **Resuelto 2026-11-09** (ver abajo).
+  2. RD-R13: lote fijo 50 (¿variable en SPEC-00?) y `FOR UPDATE` durante HTTP (ocupa conexión; bloquea INSERT de
+     auditoría con FK). Alternativa `FOR NO KEY UPDATE SKIP LOCKED` (cambio de RD-R13).
+  3. La reconciliación arranca aunque `registrar-deposito` esté inactivo en el manifest (PIP-R12 lo exige así).
+  4. Billetera USD debe implementar Q13 (abono en `/depositos/usd`) y corregir la descripción de `cliente_id`; Q7,
+     Q8, Q9 (URL de tokens), Q10, Q11, Q12 siguen abiertas.
+  5. ~~Volumen Postgres de docker existente.~~ Recreado el 2026-11-09 (compose local; kind no).
+  6. `src/server.js` ignora `SIGTERM` (pod muere a los 30 s en kind) y no tiene prueba directa.
+  7. `tests/helpers/tokens.js`: añadir `usr-bloqueada`/`usr-cerrada` o un `token(usuario, { roles })`.
+  8. Commits del retrabajo pendientes.
+
+## 2026-11-09 — Mantenimiento: deadlock intermitente en `limpiar()` (`TRUNCATE`)
+- **Agente:** tester (sin feature reabierta). Informe: `progress/deadlock_truncate.md`.
+- **Causa:** INSERT de auditoría en vuelo (AUD-R03, `res.on('finish')`) que valida su FK contra `depositos` mientras el
+  `TRUNCATE` de la prueba siguiente bloqueaba `depositos` antes que `auditoria_depositos` (orden de `pg_tables` sin
+  `ORDER BY`, variable entre corridas). Reproducido con una prueba temporal (13/200 iteraciones); `src/` sin defecto.
+- **Cambio:** solo `tests/helpers/db.js`: `TRUNCATE` en orden hijas-primero (topológico por FKs) y espera acotada
+  (5 s) a que no quede trabajo vivo en el pool ni en `pg_stat_activity`.
+- **Verificación:** 0/600 iteraciones con deadlock; 6/6 `init.sh` completos en verde (tester) + 1 (leader), 494/494.
+- **Recordatorio:** no correr dos `init.sh` a la vez contra la misma BD.
+- Docker compose recreado (`down -v` + `up -d --build`): `depositos.titular_id` presente; pendiente 5 resuelto en local.

@@ -67,3 +67,41 @@ Jest: "./src/modules/" coverage threshold for statements (80%) not met: 65.51%
 Las 234 pruebas pasan; el único fallo es el umbral de cobertura de `src/modules/`, porque
 `consultar-deposito` aún no tiene pruebas (0 %). Se resuelve cuando el tester escriba
 CD-T01..T09. No es una regresión.
+
+## Retrabajo v1.3, 2026-11-09
+
+Cambio de spec (v1.2 → v1.3): nuevas reglas CD-R08 y CD-R09; casos nuevos CD-T14 y CD-T15; CD-T13 solo
+precisa el usuario (`usr-cliente-1`).
+
+### Resultado: sin cambios de código
+
+Se revisaron los 5 archivos de `src/modules/consultar-deposito/` contra las reglas nuevas. Ya las cumplen; no se
+modificó ningún archivo.
+
+- **CD-R08** · `service.consultar` lee la fila con `repository.buscarPorId` (solo SELECT) y la devuelve con
+  `aJson(fila, ...)`, así que `estado` sale tal cual (incluido `PROCESANDO`). El service solo importa
+  `billeteraClient.consultarCuenta` (y solo para CLIENTE, CD-R03); nunca llama a `acreditar` ni a
+  `POST /depositos/usd`, y no escribe en `depositos`. La prueba de integración existente
+  "CD-R07 estados PENDIENTE, PROCESANDO y FALLIDO se devuelven tal cual" ya cubre el estado.
+- **CD-R09** · El service no lee `cuenta.estado`: el permiso es solo `permisos.esTitular(usuario, cuenta)`, que
+  compara `cuenta.titularId === usuario.id` (`src/core/permisos.js:24`). En `billeteraClient.consultarCuentaUsd`,
+  `BLOCKED`/`CLOSED` se mapean a `BLOQUEADA`/`CERRADA` y se devuelven sin lanzar (solo lanza con un estado
+  desconocido o sin `user_id`, INT-R04), y la cuenta PEN tampoco lanza por estado. Una billetera bloqueada o
+  cerrada del titular permite la consulta (200).
+- Reglas CD-R01..R07: sin cambios, siguen como en las secciones anteriores.
+
+### Pruebas obsoletas
+
+Ninguna. No hay pruebas de SPEC-08 que esperen rechazo por estado de billetera ni llamadas a billetera para
+actualizar un depósito. Faltan las nuevas **CD-T14** y **CD-T15** (tester). CD-T13 cambió solo su enunciado; la
+prueba existente sigue siendo válida si usa `usr-cliente-1` (lo debe confirmar el tester).
+
+### `bash init.sh --rapido`
+
+```
+[WARN]  SPEC-08 (en curso) aún sin prueba: CD-T14, CD-T15
+[WARN]  SPEC-11 (reabierta) aún sin prueba: CM-T09
+[OK]    Alcance de archivos correcto (190 archivos revisados)
+Test Suites: 12 passed, 12 total · Tests: 261 passed, 261 total
+[OK]    Entorno listo (verificación rápida).
+```

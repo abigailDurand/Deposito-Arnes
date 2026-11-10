@@ -4,8 +4,9 @@ const { z } = require('zod');
 
 const ESTADOS = ['PENDIENTE', 'PROCESANDO', 'COMPLETADO', 'FALLIDO'];
 
-// HD-R01
-const esquemaNumero = z.string().regex(/^\d{4}-\d{4}-\d{6}$/);
+// HD-R01: formato PEN o UUID en minúsculas para Billetera USD
+const RE_NUMERO = /^(?:\d{4}-\d{4}-\d{6}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/;
+const esquemaNumero = z.string().regex(RE_NUMERO);
 
 // Solo dígitos: rechaza '', '1.5', '1e2', ' 3' y valores repetidos (llegan como arreglo).
 function entero({ min, max, porDefecto }) {
