@@ -6,7 +6,7 @@
 
 - **Id:** `alerta-uif` · **Tipo:** post-proceso · **Extiende:** SPEC-07 · **Orden:** en el manifest.
 - **Depende de:** SPEC-06 (contrato de extensión).
-- **Versión spec:** 1.2
+- **Versión spec:** 1.3
 
 **Stack:** pg 8.13, decimal.js 10.4. Pruebas: Jest 29 + Supertest 7 + nock 13.
 
@@ -42,7 +42,7 @@ sequenceDiagram
 
 ## 4. Reglas de Negocio
 
-- **UIF-R01** · El pipeline solo lo llama cuando el depósito quedó COMPLETADO, también tras un reintento exitoso.
+- **UIF-R01** · El pipeline solo lo llama cuando el depósito quedó COMPLETADO, también tras un reintento exitoso o una reconciliación (RD-R13), una sola vez por depósito.
 - **UIF-R02** · Compara `deposito.monto` en `deposito.moneda` (el monto **depositado**, no el convertido).
 - **UIF-R03** · `monto >= umbral` (Decimal `gte`) → inserta en `alertas_uif` con `id = crypto.randomUUID()`, `estado_reporte` PENDIENTE y el umbral usado.
 - **UIF-R04** · Umbrales en `UIF_UMBRAL_PEN` y `UIF_UMBRAL_USD`. **El valor real debe verificarse en la normativa SBS vigente** [POR ACORDAR]; nunca en el código. Si falta el de esa moneda → `logger.warn` y no hay alerta.

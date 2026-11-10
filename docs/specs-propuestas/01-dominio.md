@@ -1,12 +1,14 @@
 # SPEC-01 · Dominio: depósito, estados y errores
 
+> **PROPUESTA, no vigente.** Vigente: `specs-v2/01-dominio.md`. Motivo y decisiones: `docs/propuesta-billetera-usd-v1.2.md`.
+
 ## 1. Metadatos y Tech Stack
 
 **Objetivo:** Definir el depósito, sus estados, su tabla, su forma en JSON y el formato único de errores que usa todo el servicio.
 
 - **Depende de:** SPEC-00.
 - **Lo usan:** todas las specs 02 a 12.
-- **Versión spec:** 1.1
+- **Versión spec:** 1.2 (propuesta)
 
 **Stack:** Express 4.21, pg 8.13, decimal.js 10.4. Pruebas: Jest 29 + Supertest 7.
 
@@ -27,8 +29,8 @@ El Agente tiene permitido leer y modificar ÚNICAMENTE los siguientes archivos:
 stateDiagram-v2
     [*] --> PENDIENTE: pasa validaciones
     PENDIENTE --> PROCESANDO: se llama a billetera
-    PROCESANDO --> COMPLETADO: billetera confirma
-    PROCESANDO --> FALLIDO: error o timeout
+    PROCESANDO --> COMPLETADO: billetera confirma (en la petición o en diferido, SPEC-07)
+    PROCESANDO --> FALLIDO: error, timeout o rechazo (en la petición o en diferido, SPEC-07)
     FALLIDO --> PROCESANDO: reintento con la misma Idempotency-Key (SPEC-05)
     COMPLETADO --> [*]
 ```
@@ -44,7 +46,10 @@ stateDiagram-v2
 - **DOM-R07** · `manejadorErrores`: si es `ErrorApp`, responde su status y mensaje del catálogo. Si trae `depositoId`, asigna `res.locals.depositoId`. JSON mal formado (`entity.parse.failed`) → 400 `FORMATO_INVALIDO`. Cualquier otro error → 500 `ERROR_INTERNO` y `logger.error` con correlationId; nunca el stack en la respuesta.
 - **DOM-R08** · Express 4 no captura errores de funciones `async`: todo controller o middleware `async` se envuelve con `manejar(fn)`, que pasa el error a `next`.
 - **DOM-R09** · `registrarErrores({ CODIGO: { status, mensaje } })` agrega códigos de features al catálogo. Si el código ya existe, lanza error.
-- **DOM-R10** · `aJson`: nombres en camelCase, `monto` como string con 2 decimales, `referencia` ausente → `null`, fechas ISO 8601 UTC. No expone `usuario_id` ni los campos `*_acreditar`.
+- **DOM-R10** · `aJson`: nombres en camelCase, `monto` como string con 2 decimales, `referencia` ausente → `null`, fechas ISO 8601 UTC. No expone `usuario_id`, `titular_id` ni los campos `*_acreditar`.
+
+- **DOM-R11** · `titular_id` guarda el titular de la cuenta destino al registrar el depósito. Es del core porque reintento y reconciliación lo necesitan para reenviar un body idéntico (RD-R08, RD-R13). Puede ser `NULL` solo en cuentas de la billetera PEN; en Billetera USD siempre existe (INT-R04). No es FK.
+- **DOM-R12** · Un depósito puede permanecer en `PROCESANDO` mientras Billetera USD confirma el abono (RD-R12). `VALIDADO` es un estado de Billetera USD y no se guarda ni se expone.
 
 ```sql
 CREATE TABLE depositos (
@@ -58,6 +63,7 @@ CREATE TABLE depositos (
     referencia        VARCHAR(140),
     estado            VARCHAR(20)   NOT NULL CHECK (estado IN ('PENDIENTE','PROCESANDO','COMPLETADO','FALLIDO')),
     usuario_id        VARCHAR(50)   NOT NULL,
+    titular_id        VARCHAR(100),
     creado_en         TIMESTAMPTZ   NOT NULL DEFAULT now(),
     actualizado_en    TIMESTAMPTZ   NOT NULL DEFAULT now()
 );
@@ -110,6 +116,7 @@ CREATE INDEX idx_depositos_usuario ON depositos (usuario_id, creado_en DESC);
    - **DOM-T06** · `aJson` con monto `150` y sin referencia → `"150.00"` y `referencia: null`.
    - **DOM-T07** · Controller `async` que lanza, envuelto en `manejar` → responde el error (no se cuelga).
    - **DOM-T08** · `enTransaccion` cuya función lanza → ninguna fila insertada.
+   - **DOM-T09** · `aJson` con `titular_id` → la respuesta no lo contiene.
 3. **`revisor`:** Verificar DOM-R07, DOM-R08 y DOM-R10.
 
 **Criterios de aceptación:**

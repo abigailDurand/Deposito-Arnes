@@ -2,11 +2,11 @@
 
 ## 1. Metadatos y Tech Stack
 
-**Objetivo:** Si el depósito llega en una moneda distinta a la de la cuenta (PEN ↔ USD), calcular cuánto acreditar en la moneda de la cuenta según el tipo de cambio vigente.
+**Objetivo:** Si el depósito llega en USD a una cuenta en soles, calcular cuánto acreditar en PEN según el tipo de cambio vigente. Hacia cuentas en dólares no hay conversión: Billetera USD deja fuera el cambio con liquidación (D1).
 
 - **Id:** `conversion-moneda` · **Tipo:** transformador · **Extiende:** SPEC-07 · **Orden:** en el manifest.
 - **Depende de:** SPEC-06 (contrato: `ejecutar`, `persistir`, `leerExtension`).
-- **Versión spec:** 1.1
+- **Versión spec:** 1.2
 
 **Stack:** pg 8.13, decimal.js 10.4. Pruebas: Jest 29 + Supertest 7 + nock 13.
 
@@ -28,7 +28,7 @@ sequenceDiagram
     participant M as conversion-moneda
     participant DB as PostgreSQL
     P->>M: ejecutar(deposito, contexto)
-    alt deposito.moneda = contexto.cuenta.moneda
+    alt deposito.moneda = contexto.cuenta.moneda, o contexto.cuenta.moneda = USD
         M-->>P: deposito sin cambios
     else monedas distintas
         M->>DB: buscarVigente(moneda, cuenta.moneda)
@@ -54,6 +54,7 @@ sequenceDiagram
 - **CM-R08** · `leerExtension(depositoId)` → el objeto de §5 desde `conversiones_deposito`, o `null` si no hay fila.
 - **CM-R09** · Si billetera falla después, la fila de conversión se queda: pertenece al depósito FALLIDO.
 - **CM-R10** · Fuente de los tipos de cambio: [POR ACORDAR]. Por ahora, carga manual en la tabla.
+- **CM-R11** · Si `contexto.cuenta.moneda` es USD y `deposito.moneda` no → devuelve `deposito` sin cambios y no lanza, y el service responde 422 `MONEDA_NO_SOPORTADA`. No se consulta `tipos_cambio`. `/fx` de Billetera USD es referencial y no se usa para acreditar.
 
 ```sql
 CREATE TABLE tipos_cambio (
@@ -74,8 +75,7 @@ CREATE TABLE conversiones_deposito (
 );
 -- Valores de EJEMPLO [POR ACORDAR], solo para probar a mano.
 INSERT INTO tipos_cambio VALUES
-  ('00000000-0000-0000-0000-000000000001','USD','PEN',3.7500,'2026-01-01T00:00:00Z'),
-  ('00000000-0000-0000-0000-000000000002','PEN','USD',0.2600,'2026-01-01T00:00:00Z');
+  ('00000000-0000-0000-0000-000000000001','USD','PEN',3.7500,'2026-01-01T00:00:00Z');
 ```
 
 ## 5. El Contrato (API Contract)
@@ -101,9 +101,10 @@ No agrega rutas. Agrega este bloque a las respuestas de `POST /api/v1/depositos`
    - **CM-T06** · `convertir("10.01", "3.7555")` → `"37.59"`. `convertir("1.00", "3.7550")` → `"3.76"`.
    - **CM-T07** · Feature `inactivo`, USD → 422 `MONEDA_NO_SOPORTADA`.
    - **CM-T08** · Billetera 500 después de convertir → depósito FALLIDO; la fila de conversión se queda.
+   - **CM-T09** · `100.00` PEN a `11111111-1111-4111-8111-111111111111` (USD) con tipo PEN→USD cargado y feature activa → 422 `MONEDA_NO_SOPORTADA`; sin fila; sin acreditación.
 4. **`revisor`:** Verificar CM-R04 (Decimal y redondeo) y CM-R07 (usa la `tx` recibida).
 
 **Criterios de aceptación:**
-- ✅ Un depósito en otra moneda se acredita convertido con el tipo de cambio vigente.
+- ✅ Un depósito en USD a una cuenta en soles se acredita convertido con el tipo de cambio vigente; hacia cuentas en dólares se rechaza.
 - ✅ La conversión queda registrada y se ve en el detalle del depósito.
 - ✅ Sin la feature, un depósito en otra moneda se rechaza con 422.

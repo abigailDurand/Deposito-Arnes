@@ -6,7 +6,7 @@
 
 - **Depende de:** SPEC-01, SPEC-03, SPEC-04 (middlewares globales).
 - **Lo usan:** SPEC-07 a SPEC-12.
-- **Versión spec:** 1.1
+- **Versión spec:** 1.2
 
 **Stack:** Express 4.21, js-yaml 4.1. Pruebas: Jest 29 + Supertest 7.
 
@@ -17,7 +17,7 @@ El Agente tiene permitido leer y modificar ÚNICAMENTE los siguientes archivos:
 - [NUEVO] `src/core/pipeline.js` (Ejecuta los huecos. No conoce ninguna feature por su nombre).
 - [NUEVO] `src/core/cargador.js` (`cargar(manifest)`: valida y registra los módulos activos).
 - [NUEVO] `src/app.js` (Exporta `crearApp({ manifest })`, que devuelve la app Express sin hacer `listen`).
-- [NUEVO] `src/server.js` (Lee el YAML de `MANIFEST_PATH`, llama a `crearApp`, a `limpiarClaves.iniciar()` y hace `listen(PORT)`).
+- [NUEVO] `src/server.js` (Lee el YAML de `MANIFEST_PATH`, llama a `crearApp`, a `limpiarClaves.iniciar()`, a `reconciliacion.iniciar()` (SPEC-07) y hace `listen(PORT)`).
 - [NUEVO] `tests/core/pipeline.test.js` · `tests/core/cargador.test.js` (Con módulos falsos, no con las features reales).
 
 ## 3. Flujo del Sistema
@@ -47,14 +47,15 @@ deposito = {
   canal,            // 'AGENTE' | 'VENTANILLA' | 'APP'
   referencia,       // string | null
   usuarioId,        // string
+  titularId,        // string | null; titular de la cuenta (DOM-R11)
   montoAcreditar,   // Decimal; inicia igual a monto
   monedaAcreditar,  // inicia igual a moneda
   extensiones: {},  // datos visibles para el cliente, uno por id de módulo
   estado,           // solo en post-procesos: 'COMPLETADO'
 };
 contexto = {
-  usuario,          // { id, roles }
-  cuenta,           // { numero, estado, moneda, titularId }; null en un reintento
+  usuario,          // { id, roles }; en una reconciliación, { id: usuario_id, roles: [] }
+  cuenta,           // { numero, estado, moneda, titularId }; null en un reintento o reconciliación
   correlationId,
   logger,           // logger.child({ correlationId, modulo: id })
   db,               // pool de src/core/db.js
@@ -86,7 +87,7 @@ contexto = {
 - **PIP-R09** · Si una feature activa no existe en `src/modules/`, o su `tipo` no coincide con el del manifest → lanza error y la app no arranca.
 - **PIP-R10** · Registra los `errores` de cada módulo con `registrarErrores` (SPEC-01).
 - **PIP-R11** · `crearApp({ manifest })` monta en este orden: `trust proxy` = `TRUST_PROXY` → `correlationId` → `auditoria` → `GET /health` → `autenticar` → `express.json({ limit: '100kb' })` → routers en `/api/v1` → 404 `RUTA_NO_ENCONTRADA` → `manejadorErrores`.
-- **PIP-R12** · `crearApp` no inicia tareas; `server.js` llama a `limpiarClaves.iniciar()` (SPEC-05).
+- **PIP-R12** · `crearApp` no inicia tareas; `server.js` llama a `limpiarClaves.iniciar()` (SPEC-05) y a `reconciliacion.iniciar()` (SPEC-07).
 
 ## 5. El Contrato (API Contract)
 

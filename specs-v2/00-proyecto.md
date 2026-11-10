@@ -9,7 +9,7 @@
 - **No hace:** guardar ni modificar saldos (son de billetera-service), ni entrar a la BD de otro servicio.
 - **Fuera de alcance:** sagas, broker de eventos, outbox, blockchain.
 - **Otros servicios:** billetera-service (cuentas y saldos), usuario-service (emite el JWT), pagos-service (sin relación).
-- **Versión spec:** 1.2
+- **Versión spec:** 1.3
 
 **Backend Stack:** Node.js 22 LTS, CommonJS (`require` / `module.exports`), Express 4.21.2, pg 8.13.1, decimal.js 10.4.3, zod 3.23.8, jsonwebtoken 9.0.2, axios 1.7.9, js-yaml 4.1.0, pino 9.5.0. PostgreSQL 16. Docker. (Contenedor `deposito-service`).
 
@@ -84,7 +84,9 @@ Si otra spec contradice esta sección, gana esta sección y el agente lo reporta
 - `JWT_PUBLIC_KEY` (obligatoria; PEM, se aceptan `\n` escritos) · `JWT_ALGORITHMS` (def. `RS256`) · `JWT_ISSUER` (def. `usuario-service`) · `JWT_AUDIENCE` (def. `banco-api`).
 - `IDEMPOTENCIA_DIAS` (def. `7`).
 - `BILLETERA_URL` (obligatoria) · `BILLETERA_TOKEN` (obligatoria) · `BILLETERA_TIMEOUT_MS` (def. `5000`, aplica a ambas billeteras). Billetera PEN (SPEC-02).
-- `BILLETERA_USD_URL` (obligatoria) · `BILLETERA_USD_TOKEN` (opcional; Billetera USD hoy no exige autenticación, INT-R02). Billetera USD (SPEC-02).
+- `BILLETERA_USD_URL` (obligatoria). Billetera USD (SPEC-02).
+- `BILLETERA_USD_TOKEN_URL` (opcional mientras dure la transición, Q7; URL real [POR ACORDAR], Q9) · `BILLETERA_USD_CLIENT_ID` y `BILLETERA_USD_CLIENT_SECRET` (obligatorias si hay `BILLETERA_USD_TOKEN_URL`; el secreto nunca en imágenes ni en el repositorio). Sustituyen a `BILLETERA_USD_TOKEN` (INT-R13).
+- `RECONCILIACION_INTERVALO_MS` (def. `30000`) · `RECONCILIACION_ANTIGUEDAD_MS` (def. `10000`) · `RECONCILIACION_ALERTA_MS` (def. `3600000`). Reconciliación de depósitos USD (RD-R13).
 - `UIF_UMBRAL_PEN` · `UIF_UMBRAL_USD` (opcionales; valor real [POR ACORDAR], SPEC-12).
 
 ## 6. Instrucciones de Ejecución para el Agente
