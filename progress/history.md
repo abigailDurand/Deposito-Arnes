@@ -316,3 +316,10 @@
 - **Pendientes:** secreto `ORQUESTADOR_TOKEN` (fine-grained PAT, Contents R/W en el integrador); el integrador debe
   montar en el Job de migración el mismo ConfigMap/Secret que el Deployment; `imagePullSecret` si el paquete GHCR es
   privado; `.env` local sin `BILLETERA_USD_URL`. Obs. no bloqueante: la imagen incluye todo `scripts/`.
+
+## 2026-11-12 — Aviso al integrador funcionando
+- `ORQUESTADOR_TOKEN` corregido por el humano (antes HTTP 403 por permisos). Run 42903146041 verde; el integrador
+  fijó `services-config/deposito-service/version.env` = `8c5bba6` (run 43131884197).
+- Decisión del humano: este servicio (PEN+USD) se queda como `deposito-service`; `depositos-pen/` y `depositos-usd/`
+  son de otro equipo y no se tocan. README del integrador: PR abigailDurand/Deposito-integrador-#1.
+- Pendiente: el integrador aún no despliega (compose y `kubernetes/` vacíos).
